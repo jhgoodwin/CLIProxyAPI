@@ -35,6 +35,7 @@ auths/*
 # Documentation
 docs/*
 !docs/management-api-v8.md
+!docs/tenant-policy.md
 AGENTS.md
 CLAUDE.md
 GEMINI.md
