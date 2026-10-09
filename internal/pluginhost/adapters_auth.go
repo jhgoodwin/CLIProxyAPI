@@ -116,6 +116,10 @@ func (a *accessAdapter) Identifier() (identifier string) {
 }
 
 func (a *accessAdapter) Authenticate(ctx context.Context, r *http.Request) (result *sdkaccess.Result, authErr *sdkaccess.AuthError) {
+	return a.authenticate(ctx, r, "")
+}
+
+func (a *accessAdapter) authenticate(ctx context.Context, r *http.Request, verifiedPrincipal string) (result *sdkaccess.Result, authErr *sdkaccess.AuthError) {
 	if a == nil || a.provider == nil || a.host.isPluginFused(a.pluginID) || !a.host.pluginIdentityCurrent(a.pluginID, a.path, a.version) {
 		return nil, sdkaccess.NewNotHandledError()
 	}
@@ -132,11 +136,12 @@ func (a *accessAdapter) Authenticate(ctx context.Context, r *http.Request) (resu
 		return nil, sdkaccess.NewInternalAuthError("failed to read plugin auth request body", errReadAll)
 	}
 	resp, errAuthenticate := a.provider.Authenticate(ctx, pluginapi.FrontendAuthRequest{
-		Method:  r.Method,
-		Path:    r.URL.Path,
-		Headers: cloneHeader(r.Header),
-		Query:   cloneValues(r.URL.Query()),
-		Body:    bytes.Clone(body),
+		VerifiedPrincipal: verifiedPrincipal,
+		Method:            r.Method,
+		Path:              r.URL.Path,
+		Headers:           cloneHeader(r.Header),
+		Query:             cloneValues(r.URL.Query()),
+		Body:              bytes.Clone(body),
 	})
 	if errAuthenticate != nil || !resp.Authenticated {
 		return nil, sdkaccess.NewNotHandledError()

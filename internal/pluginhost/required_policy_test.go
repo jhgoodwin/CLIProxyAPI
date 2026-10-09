@@ -3,6 +3,7 @@ package pluginhost
 import (
 	"context"
 	"errors"
+	"gopkg.in/yaml.v3"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -166,5 +167,44 @@ func TestRequiredPolicyStaleFrontendManagerFailsClosedOnUnload(t *testing.T) {
 	}
 	if !manager.RequiresFrontendAuthentication() {
 		t.Fatal("realtime credential shortcut remains enabled")
+	}
+}
+
+func TestIdentityRequiredPolicyFullAPIAndUnauditedPathBoundary(t *testing.T) {
+	h := newHostWithRecords(requiredPolicyRecord("tenant-policy", passingPolicy()))
+	requirePolicyConfig(h, "tenant-policy")
+	item := h.runtimeConfig.Plugins.Configs["tenant-policy"]
+	var node yaml.Node
+	if err := yaml.Unmarshal([]byte("mode: identity\n"), &node); err != nil {
+		t.Fatal(err)
+	}
+	item.Raw = *node.Content[0]
+	h.runtimeConfig.Plugins.Configs["tenant-policy"] = item
+	a := &requiredPolicyAccess{host: h}
+	for _, tc := range []struct{ method, path string }{
+		{http.MethodPost, "/v1/images/generations"}, {http.MethodPost, "/v1/images/edits"}, {http.MethodPost, "/v1/audio/speech"}, {http.MethodPost, "/v1/tts"}, {http.MethodPost, "/v1/messages/count_tokens"},
+		{http.MethodGet, "/v1/responses"}, {http.MethodGet, "/backend-api/codex/responses"}, {http.MethodGet, "/v1/realtime"}, {http.MethodPost, "/v1/realtime/client_secrets"}, {http.MethodGet, "/v1/live/call"}, {http.MethodGet, "/v1/models"}, {http.MethodGet, "/v1/models/model"}, {http.MethodPost, "/v1beta/models/model:countTokens"}, {http.MethodPost, "/v1/responses/compact"}, {http.MethodPost, "/v1/videos/generations"},
+	} {
+		req := httptest.NewRequest(tc.method, tc.path, nil)
+		if tc.method == http.MethodGet && (tc.path == "/v1/responses" || tc.path == "/v1/realtime") {
+			req.Header.Set("Upgrade", "websocket")
+		}
+		if _, err := a.Authenticate(context.Background(), req); err != nil {
+			t.Errorf("%s %s: %v", tc.method, tc.path, err)
+		}
+	}
+	for _, tc := range []struct{ method, path string }{{http.MethodPost, "/v0/management/api-call"}, {http.MethodGet, "/amp/proxy"}, {http.MethodDelete, "/v1/responses"}, {http.MethodPost, "/v1/unknown"}} {
+		if _, err := a.Authenticate(context.Background(), httptest.NewRequest(tc.method, tc.path, nil)); err == nil {
+			t.Errorf("allowed %s %s", tc.method, tc.path)
+		}
+	}
+	h.runtimeConfig.Home.Enabled = true
+	if _, err := a.Authenticate(context.Background(), httptest.NewRequest(http.MethodGet, "/v1/responses", nil)); err == nil {
+		t.Fatal("Home bypass")
+	}
+	h.runtimeConfig.Home.Enabled = false
+	setHostSnapshotForTest(h, true)
+	if _, err := a.Authenticate(context.Background(), httptest.NewRequest(http.MethodGet, "/v1/responses", nil)); err == nil {
+		t.Fatal("missing required identity plugin allowed")
 	}
 }

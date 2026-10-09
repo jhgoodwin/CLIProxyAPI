@@ -2,6 +2,9 @@ package pluginhost
 
 import (
 	"context"
+	sdkaccess "github.com/router-for-me/CLIProxyAPI/v8/sdk/access"
+	"github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/session"
+	"maps"
 	"strings"
 
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
@@ -70,6 +73,15 @@ func (h *Host) callScheduler(ctx context.Context, record capabilityRecord, req p
 		}
 	}()
 
+	// Direct realtime selection does not build handler execution metadata. Bind
+	// its scheduler scope to the same authenticated frontend subject.
+	if principal := sdkaccess.AuthenticatedPrincipal(ctx); principal != "" {
+		req.Options.Metadata = maps.Clone(req.Options.Metadata)
+		if req.Options.Metadata == nil {
+			req.Options.Metadata = map[string]any{}
+		}
+		req.Options.Metadata["caller_scope"] = session.CallerScope(principal)
+	}
 	req.Plugin = record.meta
 	resp, errPick := scheduler.Pick(ctx, req)
 	if errPick != nil {

@@ -203,10 +203,6 @@ func accessAuthMiddleware(manager *sdkaccess.Manager, realtimeError bool) gin.Ha
 func realtimeAuthMiddleware(manager *sdkaccess.Manager, handler *codexlive.Handler) gin.HandlerFunc {
 	fallback := realtimeStandardAuthMiddleware(manager)
 	return func(c *gin.Context) {
-		if manager.RequiresFrontendAuthentication() {
-			fallback(c)
-			return
-		}
 		authorization, matched, errAuthenticate := handler.AuthenticateClientSecret(c.Request)
 		if !matched {
 			fallback(c)
@@ -221,6 +217,16 @@ func realtimeAuthMiddleware(manager *sdkaccess.Manager, handler *codexlive.Handl
 			}})
 			return
 		}
+		if manager.RequiresFrontendAuthentication() {
+			result, err := manager.ReauthorizeDelegatedPrincipal(c.Request.Context(), c.Request, authorization.IssuerPrincipal, authorization.IssuerProvider)
+			if err != nil {
+				c.AbortWithStatusJSON(err.HTTPStatusCode(), gin.H{"error": gin.H{"message": err.Message, "type": "authentication_error", "code": "invalid_realtime_client_secret"}})
+				return
+			}
+			if len(result.Metadata) > 0 {
+				c.Set("accessMetadata", result.Metadata)
+			}
+		}
 		principal := authorization.IssuerPrincipal
 		if principal == "" {
 			principal = authorization.Principal
@@ -230,6 +236,7 @@ func realtimeAuthMiddleware(manager *sdkaccess.Manager, handler *codexlive.Handl
 			provider = "realtime-client-secret"
 		}
 		c.Set("userApiKey", principal)
+		c.Request = c.Request.WithContext(sdkaccess.WithAuthenticatedPrincipal(c.Request.Context(), principal))
 		c.Set("accessProvider", provider)
 		c.Set(codexlive.ClientSecretSessionContextKey, authorization.Session)
 		c.Set(codexlive.ClientSecretPrincipalContextKey, authorization.Principal)

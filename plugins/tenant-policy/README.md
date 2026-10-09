@@ -1,12 +1,38 @@
 # Tenant policy plugin suite
 
-This Linux Go C-shared plugin groups exclusive tenant-key authentication, provider authorization, shared quota pools, durable accounting, LiteLLM pricing, and usage dashboards in one artifact. It requires the accompanying generic host barriers and schema version 7; built-in upstream executors remain unchanged.
+This Linux Go C-shared plugin groups exclusive tenant-key authentication, provider authorization, shared quota pools, durable accounting, LiteLLM pricing, and usage dashboards in one artifact. It requires the accompanying host barriers and schema version 7; built-in upstream executors remain unchanged. The default `mode: quota` enforces the accounting policy described below. Explicit `mode: identity` provides named keys and best-effort usage attribution for trusted users without quota enforcement.
 
 Subscription and volume-limited providers use named pools selected by account identifiers, arrays, or globs. Users receive independent percentages of renewing capacity and native credits. An owner can have 100% and a friend 50%; adding a member expands that pool without clearing past consumption. Keep personal accounts in another pool when their capacity should stay private. Positive grants are permissive when quota is unknown; only known, unexpired exhaustion blocks, and quota checks never wait or poll. Changed balance deltas are estimated in proportion to each user's admitted-attempt count since the prior changed balance; this is best-effort share accounting, not per-request provider usage. See the [quota and attribution rules](pool.md#provider-reported-remaining-quota).
 
 The USD limit caps **internal policy debits**, not provider invoices. Each authorized upstream attempt consumes a fixed allowance: `input_allowance_tokens × input_rate + output_allowance_tokens × output_rate`. Allowance token counts are accounting inputs, not enforced upstream token ceilings. Retries consume another allowance. No refund occurs on failure, cancellation, missing usage, or restart. Observed usage is separately accumulated and deduplicated; usage above an attempt allowance or a mismatched usage model/provider persistently blocks that user. Already admitted requests can finish and incur further upstream charges. An administrator must review rates/allowances before explicitly clearing that block.
 
-Token prices are exact decimal USD. Imported cache and long-context token prices use conservative maximum input/output rates. Cache and reasoning counters are counted separately, which can overstate usage when upstream counters overlap. Extra non-token billing dimensions require explicit administrator rates. Unknown aliases, provider substitutions, upstream model substitutions, prices, and unsupported request paths fail closed. The supported text paths are `/v1/chat/completions`, `/v1/completions`, `/v1/messages`, and `/v1/responses`, including HTTP streaming. WebSocket, Home dispatch, plugin direct execution, images/audio, and token-count paths are denied under the required policy guard.
+Token prices are exact decimal USD. Imported cache and long-context token prices use conservative maximum input/output rates. Cache and reasoning counters are counted separately, which can overstate usage when upstream counters overlap. Extra non-token billing dimensions require explicit administrator rates. Unknown aliases, provider substitutions, upstream model substitutions, prices, and unsupported request paths fail closed. In quota mode, the supported text paths are `/v1/chat/completions`, `/v1/completions`, `/v1/messages`, and `/v1/responses`, including HTTP streaming. WebSocket, Home dispatch, plugin direct execution, images/audio, and token-count paths are denied under the required policy guard.
+
+## Named keys without quota enforcement
+
+For personal use or trusted users, explicitly select identity mode:
+
+```yaml
+plugins:
+  enabled: true
+  dir: /srv/cliproxy-plugins
+  configs:
+    tenant-policy:
+      required: true
+      enabled: true
+      mode: identity
+      state: /srv/cliproxy-policy/ledger.json
+```
+
+Initialize the ledger and create a named user and labeled key with the CLI below. `user-set USER 0 PROVIDER...` accepts zero as the unused USD limit in this mode. Identity mode still requires one valid Bearer key, an enabled user, and access to the selected provider. Revoked keys fail subsequent authorization. Bootstrap host keys cannot bypass tenant authentication. Locally issued realtime ephemeral secrets are bound to their issuing tenant key and recheck that key, its user, and the Codex provider grant on each new request/connection. Keep `required: true` so missing, disabled, or failed plugins reject requests.
+
+Identity mode permits the proxy's implemented HTTP APIs: text and multimodal chat/messages/responses, image generation and edits, speech/TTS, video, model discovery, Gemini interactions and token counting, compact responses, and Codex direct aliases. It also permits Responses WebSockets and Codex realtime APIs. It does not add new upstream capabilities or an audio transcription endpoint. Home dispatch and unaudited plugin execution paths remain unavailable.
+
+Omit `models` and `prices` to authorize the models in the proxy registry using the user's provider allowlist. A nonempty `models` map optionally restricts aliases to exact provider/upstream-model pairs; each mapping needs only `provider` and `upstream_model`. Because direct Codex live/realtime and alpha-search routes do not pass through model interception, a nonempty map disables those routes, including realtime secret issuance, sideband, and session-control endpoints. Omit the map for full trusted-user API access. Optional token price keys or explicit input/output rates provide estimates for ordinary text requests. Pools and token allowances are rejected in identity configuration to prevent misleading claims of enforcement. Existing user USD limits, spent balances, overage blocks, and pool shares are ignored in identity mode and preserved for later quota-mode use.
+
+Normal execution attempts retain trusted user/key/provider/model attribution, and deduplicate usage records. Missing token usage and actual billed costs remain unknown. Media costs are not estimated from text-token rates. USD estimates are not provider invoices, and requests without executor usage events have no usage row. Token-count requests create attribution attempts but do not consume a USD allowance. Switching back to quota mode does not retrospectively charge identity attempts.
+
+Responses WebSocket generation turns reauthorize their keys; existing streams and cancellation/control frames are not terminated when a key is revoked. Codex realtime connections authenticate at connection/request boundaries, require the `codex` provider grant, and currently have no tenant token/cost reporting. Revocation prevents new connections, but does not disconnect an active realtime session. Realtime clients can use the locally issued ephemeral secret as their Bearer credential; the host restores its verified issuer identity and reauthorizes it through the current policy. Expiration and session/model binding still apply. Quota mode does not accept this delegation. Use realtime only with trusted users who understand its usage is absent from this dashboard.
 
 ## Build and initialize
 

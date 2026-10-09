@@ -53,6 +53,7 @@ type Key struct {
 	Revoked bool   `json:"revoked"`
 }
 type Debit struct {
+	IdentityOnly  bool            `json:"identity_only,omitempty"`
 	User          string          `json:"user"`
 	AmountUSD     string          `json:"amount_usd"`
 	InputUSD      string          `json:"input_usd,omitempty"`

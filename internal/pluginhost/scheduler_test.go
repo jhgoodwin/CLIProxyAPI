@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	sdkaccess "github.com/router-for-me/CLIProxyAPI/v8/sdk/access"
+	"github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/session"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
 )
 
@@ -308,4 +310,25 @@ func schedulerRequest(ids ...string) pluginapi.SchedulerPickRequest {
 		req.Candidates = append(req.Candidates, pluginapi.SchedulerAuthCandidate{ID: id})
 	}
 	return req
+}
+
+func TestSchedulerUsesAuthenticatedIdentityForDirectSelection(t *testing.T) {
+	for _, metadata := range []map[string]any{nil, {"caller_scope": "stale"}} {
+		called := false
+		h := newHostWithRecords(capabilityRecord{id: "tenant", plugin: pluginapi.Plugin{Capabilities: pluginapi.Capabilities{Scheduler: schedulerFunc(func(_ context.Context, r pluginapi.SchedulerPickRequest) (pluginapi.SchedulerPickResponse, error) {
+			called = true
+			if r.Options.Metadata["caller_scope"] != session.CallerScope("tenant-policy:key") {
+				t.Fatalf("scope: %#v", r.Options.Metadata)
+			}
+			return pluginapi.SchedulerPickResponse{Handled: true, AuthID: "account"}, nil
+		})}}})
+		r := pluginapi.SchedulerPickRequest{Candidates: []pluginapi.SchedulerAuthCandidate{{ID: "account", Provider: "codex"}}, Options: pluginapi.SchedulerOptions{Metadata: metadata}}
+		result, handled, err := h.PickAuth(sdkaccess.WithAuthenticatedPrincipal(context.Background(), "tenant-policy:key"), r)
+		if !called || !handled || err != nil || result.AuthID != "account" {
+			t.Fatalf("result %#v, %v, %v", result, handled, err)
+		}
+		if metadata != nil && metadata["caller_scope"] != "stale" {
+			t.Fatal("mutated caller metadata")
+		}
+	}
 }

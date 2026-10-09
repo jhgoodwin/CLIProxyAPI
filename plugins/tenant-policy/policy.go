@@ -35,6 +35,7 @@ type modelPolicy struct {
 	estimateRates   MetricRates
 }
 type policyConfig struct {
+	Mode     string                 `yaml:"mode"`
 	Enabled  bool                   `yaml:"enabled"`
 	Priority int                    `yaml:"priority"`
 	Required bool                   `yaml:"required"`
@@ -60,7 +61,13 @@ func configure(raw []byte) error {
 	}
 	models := make(map[string]modelPolicy, len(c.Models))
 	for alias, model := range c.Models {
-		compiled, err := compileModelPolicy(alias, model, c.Pools, catalog)
+		var compiled modelPolicy
+		var err error
+		if c.Mode == "identity" {
+			compiled, err = compileIdentityModel(alias, model, catalog)
+		} else {
+			compiled, err = compileModelPolicy(alias, model, c.Pools, catalog)
+		}
 		if err != nil {
 			return err
 		}
@@ -94,7 +101,13 @@ func decodePolicyConfig(raw []byte) (policyConfig, error) {
 	if err := d.Decode(&c); err != nil {
 		return policyConfig{}, err
 	}
-	if !filepath.IsAbs(c.State) || len(c.Models) == 0 {
+	if c.Mode != "" && c.Mode != "quota" && c.Mode != "identity" {
+		return policyConfig{}, errors.New("mode must be quota or identity")
+	}
+	if c.Mode == "identity" && len(c.Pools) != 0 {
+		return policyConfig{}, errors.New("identity mode does not enforce quota pools")
+	}
+	if !filepath.IsAbs(c.State) || (c.Mode != "identity" && len(c.Models) == 0) {
 		return policyConfig{}, errors.New("absolute state and explicit models are required")
 	}
 	return c, nil
@@ -121,6 +134,34 @@ func loadPolicyDependencies(c policyConfig) (map[string]map[string]json.RawMessa
 		return nil, err
 	}
 	return catalog, nil
+}
+
+// Identity mappings authorize routing and optionally estimate text usage. They
+// deliberately carry no reservation tariff or provider quota enforcement.
+func compileIdentityModel(alias string, m modelPolicy, catalog map[string]map[string]json.RawMessage) (modelPolicy, error) {
+	if alias == "" || m.Provider == "" || m.UpstreamModel == "" {
+		return modelPolicy{}, fmt.Errorf("invalid model mapping %q", alias)
+	}
+	if m.Pool != "" || m.PoolOnly || m.QuotaResource != "" || m.InputAllowance != 0 || m.OutputAllowance != 0 {
+		return modelPolicy{}, fmt.Errorf("identity model %s cannot configure quota allowances", alias)
+	}
+	if (m.InputUSD == "") != (m.OutputUSD == "") {
+		return modelPolicy{}, fmt.Errorf("both override rates required: %s", alias)
+	}
+	entry := catalog[m.PriceKey]
+	if m.PriceKey != "" && entry == nil {
+		return modelPolicy{}, fmt.Errorf("missing price key: %s", m.PriceKey)
+	}
+	var err error
+	if m.InputUSD != "" {
+		m.estimateRates, err = metricRates(nil, m.InputUSD, m.OutputUSD)
+	} else {
+		m.estimateRates, err = metricRates(entry, "", "")
+	}
+	if err != nil {
+		return modelPolicy{}, fmt.Errorf("metrics price %s: %w", alias, err)
+	}
+	return m, nil
 }
 
 // compileModelPolicy returns a complete policy without changing shared state.
@@ -255,7 +296,7 @@ func handleMethod(method string, raw []byte) ([]byte, error) {
 		if err := configure(raw); err != nil {
 			return nil, err
 		}
-		return okEnvelope(map[string]any{"schema_version": pluginabi.SchemaVersion, "metadata": pluginapi.Metadata{Name: "tenant-policy", Version: "0.1.0"}, "capabilities": map[string]bool{"frontend_auth_provider": true, "frontend_auth_provider_exclusive": true, "request_interceptor": true, "request_interceptor_required": true, "scheduler": true, "scheduler_across_priorities": true, "usage_plugin": true}})
+		return okEnvelope(map[string]any{"schema_version": pluginabi.SchemaVersion, "metadata": pluginapi.Metadata{Name: "tenant-policy", Version: "0.1.0", Author: "jhgoodwin", GitHubRepository: "https://github.com/jhgoodwin/CLIProxyAPI"}, "capabilities": map[string]bool{"frontend_auth_provider": true, "frontend_auth_provider_exclusive": true, "request_interceptor": true, "request_interceptor_required": true, "scheduler": true, "scheduler_across_priorities": true, "usage_plugin": true}})
 	case pluginabi.MethodFrontendAuthIdentifier:
 		return okEnvelope(map[string]string{"Identifier": "tenant-policy"})
 	case pluginabi.MethodFrontendAuthAuthenticate:
@@ -263,21 +304,37 @@ func handleMethod(method string, raw []byte) ([]byte, error) {
 		if err := json.Unmarshal(raw, &r); err != nil {
 			return nil, err
 		}
-		// Never accept query keys, alternate authentication headers, or multiple credentials.
-		if len(r.Headers.Values("Authorization")) != 1 {
-			return okEnvelope(pluginapi.FrontendAuthResponse{})
+		var hash string
+		if r.VerifiedPrincipal != "" {
+			// This field is host-only, from a locally validated realtime secret.
+			// Recheck the issuer's ledger entry; never accept a hash as a Bearer key.
+			if configSnapshot().Mode != "identity" || !identityCodexPath(r.Path) || !strings.HasPrefix(r.VerifiedPrincipal, "tenant-policy:") {
+				return okEnvelope(pluginapi.FrontendAuthResponse{})
+			}
+			hash = strings.TrimPrefix(r.VerifiedPrincipal, "tenant-policy:")
+		} else {
+			// Never accept query keys, alternate headers, or multiple credentials.
+			if len(r.Headers.Values("Authorization")) != 1 {
+				return okEnvelope(pluginapi.FrontendAuthResponse{})
+			}
+			parts := strings.Fields(r.Headers.Get("Authorization"))
+			if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
+				return okEnvelope(pluginapi.FrontendAuthResponse{})
+			}
+			hash = KeyHash(parts[1])
 		}
-		parts := strings.Fields(r.Headers.Get("Authorization"))
-		if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
-			return okEnvelope(pluginapi.FrontendAuthResponse{})
-		}
-		hash := KeyHash(parts[1])
 		accepted := false
 		err := withLedger(configSnapshot().State, false, func(l *Ledger) error {
 			k, ok := l.Keys[hash]
 			if ok && !k.Revoked {
 				u, exists := l.Users[k.User]
 				accepted = exists && !u.Disabled
+				if accepted && identityCodexPath(r.Path) {
+					// These routes select Codex outside request interception and
+					// cannot enforce an optional per-model identity restriction.
+					c := configSnapshot()
+					accepted = c.Mode == "identity" && len(c.Models) == 0 && allowed(u, "codex")
+				}
 			}
 			return nil
 		})
@@ -304,7 +361,7 @@ func handleMethod(method string, raw []byte) ([]byte, error) {
 			if err != nil {
 				return err
 			}
-			if u.OverageBlocked {
+			if u.OverageBlocked && c.Mode != "identity" {
 				return errors.New("tenant observed usage exceeded allowance; administrator review required")
 			}
 
@@ -312,7 +369,7 @@ func handleMethod(method string, raw []byte) ([]byte, error) {
 				if !allowed(u, a.Provider) {
 					continue
 				}
-				if providerHasPool(c.Pools, a.Provider) {
+				if c.Mode != "identity" && providerHasPool(c.Pools, a.Provider) {
 					observations := r.ProviderPools[a.Provider]
 					ids := make([]string, 0, len(observations))
 					seen := map[string]bool{}
@@ -393,32 +450,45 @@ func interceptRequest(method string, raw []byte) ([]byte, error) {
 	if err := json.Unmarshal(raw, &r); err != nil {
 		return nil, err
 	}
-	if err := validateTextPayload(r.Body); err != nil {
-		return reject(403, err.Error())
+	c := configSnapshot()
+	if c.Mode != "identity" {
+		if err := validateTextPayload(r.Body); err != nil {
+			return reject(403, err.Error())
+		}
 	}
 	path, _ := r.Metadata["request_path"].(string)
-	switch path {
-	case "/v1/chat/completions", "/v1/completions", "/v1/messages", "/v1/responses":
-	default:
+	if c.Mode != "identity" && !quotaRequestPath(path) {
 		return reject(403, "unsupported tenant request path")
 	}
 	name := r.RequestedModel
 	if name == "" {
 		name = r.Model
 	}
-	c := configSnapshot()
 	m, ok := c.Models[name]
-	if !ok {
-		return reject(403, "model lacks explicit tenant price mapping")
+	if !ok && (c.Mode != "identity" || len(c.Models) != 0) {
+		return reject(403, "model lacks explicit tenant mapping")
+	}
+	if !ok && method == pluginabi.MethodRequestInterceptAfter {
+		// Actual provider and normalized model are trusted host selection metadata.
+		m = modelPolicy{Provider: r.Provider, UpstreamModel: r.Model, estimateRates: MetricRates{Source: "no pricing configured"}}
 	}
 	var result admissionResult
 	err := withLedger(c.State, method == pluginabi.MethodRequestInterceptAfter, func(l *Ledger) error {
-		id, u, err := authorizeAdmission(l, r, m)
+		id, u, err := authorizeAdmission(l, r, m, c.Mode == "identity")
 		if err != nil || method == pluginabi.MethodRequestInterceptBefore {
 			return err
 		}
 		if err := validateAttempt(l, r, m); err != nil {
 			return err
+		}
+		if c.Mode == "identity" {
+			rates := m.estimateRates
+			if !quotaRequestPath(path) || validateTextPayload(r.Body) != nil {
+				rates.Unsupported = true
+				rates.Source += " (media or non-generation cost unknown)"
+			}
+			l.Debits[r.AttemptID] = Debit{IdentityOnly: true, User: id, KeyHash: strings.TrimPrefix(r.Principal, "tenant-policy:"), EstimateRates: rates, Provider: m.Provider, Model: m.UpstreamModel, AmountUSD: "0", Settled: true}
+			return nil
 		}
 		if err := refreshPoolFacts(l, c.Pools, r, m.Pool, u, m.QuotaResource); err != nil {
 			return err
@@ -446,22 +516,22 @@ func interceptRequest(method string, raw []byte) ([]byte, error) {
 	return okEnvelope(pluginapi.RequestInterceptResponse{})
 }
 
-func authorizeAdmission(l *Ledger, r pluginapi.RequestInterceptRequest, m modelPolicy) (string, User, error) {
+func authorizeAdmission(l *Ledger, r pluginapi.RequestInterceptRequest, m modelPolicy, identity bool) (string, User, error) {
 	id, u, err := userForScope(l, session.CallerScope(r.Principal))
 	if err != nil {
 		return id, u, err
 	}
-	if u.OverageBlocked {
+	if u.OverageBlocked && !identity {
 		return id, u, errors.New("tenant observed usage exceeded allowance; administrator review required")
 	}
-	if !allowed(u, m.Provider) {
+	if (m.Provider != "" || !identity) && !allowed(u, m.Provider) {
 		return id, u, errors.New("provider access denied")
 	}
 	return id, u, nil
 }
 
 func validateAttempt(l *Ledger, r pluginapi.RequestInterceptRequest, m modelPolicy) error {
-	if r.Provider != m.Provider || r.Model != m.UpstreamModel {
+	if r.Provider == "" || r.Model == "" || r.Provider != m.Provider || r.Model != m.UpstreamModel {
 		return errors.New("selected provider or upstream model differs from policy")
 	}
 	if r.AttemptID == "" {
@@ -533,7 +603,7 @@ func settle(r pluginapi.UsageRecord) error {
 		if err := recordUsage(l, r, debit); err != nil {
 			return err
 		}
-		if r.Failed || debit.InputUSD == "" || debit.OutputUSD == "" || (d.InputTokens == 0 && d.OutputTokens == 0 && d.ReasoningTokens == 0 && d.CachedTokens == 0 && d.CacheReadTokens == 0 && d.CacheCreationTokens == 0) {
+		if debit.IdentityOnly || r.Failed || debit.InputUSD == "" || debit.OutputUSD == "" || (d.InputTokens == 0 && d.OutputTokens == 0 && d.ReasoningTokens == 0 && d.CachedTokens == 0 && d.CacheReadTokens == 0 && d.CacheCreationTokens == 0) {
 			return nil
 		}
 		if debit.Events[r.RequestID] {
@@ -702,4 +772,17 @@ func validateTextPayload(body []byte) error {
 		return nil
 	}
 	return walk(payload)
+}
+
+// Strict quota mode remains limited to the audited token-billed text endpoints.
+func quotaRequestPath(path string) bool {
+	switch strings.TrimSuffix(path, "/") {
+	case "/v1/chat/completions", "/v1/completions", "/v1/messages", "/v1/responses":
+		return true
+	}
+	return false
+}
+
+func identityCodexPath(path string) bool {
+	return path == "/v1/live" || strings.HasPrefix(path, "/v1/live/") || path == "/v1/realtime" || strings.HasPrefix(path, "/v1/realtime/") || path == "/v1/alpha/search" || path == "/backend-api/codex/alpha/search"
 }

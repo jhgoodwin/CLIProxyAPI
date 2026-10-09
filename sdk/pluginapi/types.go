@@ -445,6 +445,9 @@ type FrontendAuthProvider interface {
 
 // FrontendAuthRequest describes an inbound frontend authentication request.
 type FrontendAuthRequest struct {
+	// VerifiedPrincipal is a locally validated delegated credential's issuer.
+	// Only the host may set this field; it is never sourced from HTTP input.
+	VerifiedPrincipal string `json:",omitempty"`
 	// Method is the HTTP method.
 	Method string
 	// Path is the request path.

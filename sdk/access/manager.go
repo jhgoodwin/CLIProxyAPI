@@ -96,3 +96,33 @@ func (m *Manager) RequiresFrontendAuthentication() bool {
 	}
 	return false
 }
+
+// ReauthorizeDelegatedPrincipal rechecks a locally verified credential's issuer
+// against every required frontend policy. Providers must explicitly opt in.
+func (m *Manager) ReauthorizeDelegatedPrincipal(ctx context.Context, r *http.Request, principal, issuerProvider string) (*Result, *AuthError) {
+	var result *Result
+	for _, provider := range m.Providers() {
+		guard, required := provider.(interface{ RequireFrontendAuthentication() bool })
+		if !required || !guard.RequireFrontendAuthentication() {
+			continue
+		}
+		authorizer, ok := provider.(interface {
+			ReauthorizeDelegatedPrincipal(context.Context, *http.Request, string, string) (*Result, *AuthError)
+		})
+		if !ok {
+			return nil, NewInvalidCredentialError()
+		}
+		checked, err := authorizer.ReauthorizeDelegatedPrincipal(ctx, r, principal, issuerProvider)
+		if err != nil {
+			return nil, err
+		}
+		if checked == nil || checked.Principal != principal || checked.Provider != issuerProvider {
+			return nil, NewInvalidCredentialError()
+		}
+		result = checked
+	}
+	if result == nil {
+		return nil, NewInvalidCredentialError()
+	}
+	return result, nil
+}
