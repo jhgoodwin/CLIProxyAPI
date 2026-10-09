@@ -280,7 +280,7 @@ func userForScope(l *Ledger, scope string) (string, User, error) {
 }
 func allowed(u User, p string) bool {
 	for _, a := range u.Providers {
-		if a == p {
+		if a == "*" || a == p {
 			return true
 		}
 	}

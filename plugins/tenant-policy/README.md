@@ -64,6 +64,14 @@ go build -buildmode=c-shared -o /srv/cliproxy-plugins/tenant-policy.so ./plugins
 
 Keys print once after durable creation. `key-create USER [LABEL]` accepts an optional human-readable note; quote labels containing spaces. `key-label HASH LABEL` updates or clears the note, including for archived keys. `key-list` includes labels. Labels need not be unique and do not change authentication, balances, or the stable SHA-256 key identifier. Clients use `Authorization: Bearer KEY`; legacy host keys, query credentials, and alternate auth headers are not accepted. Multiple keys share the same user balance. Changes are effective for subsequent authorization checks without restarting. Store the ledger in its own private directory on a local filesystem with reliable flock, atomic rename, and fsync. The server and CLI must use the same OS account/state file. Back up this directory; deleting or rolling back it resets accounting. Do not use separate ledgers across replicas. CLI `user-set` preserves consumption and disable/overage state; increasing the limit is an explicit administrator action.
 
+`user-set` replaces the user's provider list. A literal `*` grants every current and future provider, including realtime Codex routes. Quote it in the shell to prevent filename expansion:
+
+```sh
+./tenant-policy --state /srv/cliproxy-policy/ledger.json user-set personal 0 '*'
+```
+
+This example uses identity mode's unused USD limit. The wildcard only grants provider access: disabled users, revoked keys, configured model restrictions, and quota-mode pricing, budgets, and pool shares still apply. It does not configure upstream providers or credentials. Use explicit provider IDs to keep a user's access restricted. Existing explicit lists retain their meaning; no ledger migration is needed.
+
 ## Pricing snapshot
 
 Download the LiteLLM `model_prices_and_context_window.json` from a reviewed pinned revision of [BerriAI/litellm](https://github.com/BerriAI/litellm/blob/main/model_prices_and_context_window.json), then validate and import it locally:
