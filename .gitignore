@@ -1,5 +1,6 @@
 # Binaries
 cli-proxy-api
+/tenant-policy
 *.exe
 
 # Configuration
@@ -13,6 +14,9 @@ conv/*
 temp/*
 refs/*
 plugins/*
+!plugins/tenant-policy/
+plugins/tenant-policy/*.so
+plugins/tenant-policy/*.h
 examples/plugin/bin/*
 
 # Storage backends

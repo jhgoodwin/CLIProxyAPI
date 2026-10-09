@@ -1,0 +1,79 @@
+# Upstream configuration only. NOT a tenant deployment: add the required tenant plugin configuration.
+# Require it at plugins.configs.<pluginID>.required: true (not plugins.required).
+# Deploy that plugin and access.api-keys: [] together before exposing the listener.
+# Subscription quotas/windows and user pool percentages belong in tenant policy configuration.
+# Copy to a private config file. Replace every REPLACE_* value and remove unused groups.
+# Placeholder values are literal strings, not environment-variable substitutions.
+config-version: 8
+server:
+  host: "127.0.0.1"
+  port: 8317
+management:
+  secret-key: ""
+  disable-control-panel: true
+access:
+  # Bootstrap credential for upstream setup only; remove when enabling tenant authentication.
+  # Do not retain a parallel static key that could bypass tenant accounting.
+  api-keys: ["REPLACE_LOCAL_PROXY_CLIENT_KEY"]
+routing:
+  force-model-prefix: true
+oauth:
+  auth-dir: "./auths"
+  # Run --claude-login, --codex-login, or --devin-login with this config.
+  # Subscription model availability comes from the authenticated account/catalog.
+api-keys:
+  openai-compatibility:
+    - name: deepseek
+      prefix: deepseek
+      base-url: "https://api.deepseek.com"
+      keys: [{api-key: "REPLACE_DEEPSEEK_API_KEY"}]
+      models:
+        - name: deepseek-flash
+          alias: flash
+    - name: cerebras
+      prefix: cerebras
+      base-url: "https://api.cerebras.ai/v1"
+      keys: [{api-key: "REPLACE_CEREBRAS_API_KEY"}]
+      models:
+        - name: gpt-oss-120b
+          alias: oss-120b
+    - name: nvidia-nim
+      prefix: nvidia-nim
+      # For self-hosted NIM, replace with http://127.0.0.1:8000/v1 and its served model ID.
+      base-url: "https://integrate.api.nvidia.com/v1"
+      keys: [{api-key: "REPLACE_NVIDIA_API_KEY"}]
+      models:
+        - name: openai/gpt-oss-120b
+          alias: oss-120b
+    - name: openrouter
+      prefix: openrouter
+      base-url: "https://openrouter.ai/api/v1"
+      keys: [{api-key: "REPLACE_OPENROUTER_API_KEY"}]
+      models:
+        # A pinned model slug is preferable to a moving alias for cost accounting.
+        - name: openai/gpt-oss-120b
+          alias: oss-120b
+    - name: groq
+      prefix: groq
+      base-url: "https://api.groq.com/openai/v1"
+      keys: [{api-key: "REPLACE_GROQ_API_KEY"}]
+      models:
+        - name: openai/gpt-oss-120b
+          alias: oss-120b
+    - name: vllm
+      prefix: vllm
+      base-url: "http://127.0.0.1:8000/v1"
+      # Match vLLM's --api-key. If upstream auth is disabled, a dummy value is acceptable.
+      keys: [{api-key: "REPLACE_VLLM_API_KEY"}]
+      models:
+        # Launch vLLM with --served-model-name local-model, or replace this name.
+        - name: local-model
+          alias: local
+    - name: openai-compatible-endpoint
+      prefix: openai-compatible
+      # Deliberately nonfunctional; replace with your own OpenAI-compatible service.
+      base-url: "https://endpoint.example.invalid/v1"
+      keys: [{api-key: "REPLACE_COMPATIBLE_API_KEY"}]
+      models:
+        - name: REPLACE_UPSTREAM_MODEL_ID
+          alias: custom
