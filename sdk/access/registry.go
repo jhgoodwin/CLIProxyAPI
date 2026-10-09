@@ -82,15 +82,17 @@ func ClearExclusiveProvider() {
 // RegisteredProviders returns the global provider instances in registration order.
 func RegisteredProviders() []Provider {
 	registryMu.RLock()
-	if len(order) == 0 {
-		registryMu.RUnlock()
-		return nil
-	}
 	if exclusiveProvider != "" {
-		if provider, exists := registry[exclusiveProvider]; exists && provider != nil {
+		if provider := registry[exclusiveProvider]; provider != nil {
 			registryMu.RUnlock()
 			return []Provider{provider}
 		}
+		registryMu.RUnlock()
+		return []Provider{unavailableExclusiveProvider{}}
+	}
+	if len(order) == 0 {
+		registryMu.RUnlock()
+		return nil
 	}
 	providers := make([]Provider, 0, len(order))
 	for _, providerType := range order {
@@ -103,3 +105,13 @@ func RegisteredProviders() []Provider {
 	registryMu.RUnlock()
 	return providers
 }
+
+// Missing exclusive authentication must never fall back to public access.
+type unavailableExclusiveProvider struct{}
+
+func (unavailableExclusiveProvider) Identifier() string { return "unavailable-exclusive-provider" }
+func (unavailableExclusiveProvider) Authenticate(context.Context, *http.Request) (*Result, *AuthError) {
+	return nil, NewInternalAuthError("exclusive authentication provider unavailable", nil)
+}
+
+func (unavailableExclusiveProvider) RequireFrontendAuthentication() bool { return true }

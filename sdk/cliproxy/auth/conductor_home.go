@@ -1422,7 +1422,15 @@ func (m *Manager) tryAntigravityCreditsExecute(ctx context.Context, req cliproxy
 			execReq := req
 			execReq.Model = upstreamModel
 			creditsCtx = syncMetadataSessionToContext(creditsCtx, creditsOpts.Metadata)
-			resp, errExec := c.executor.Execute(creditsCtx, c.auth, execReq, creditsOpts)
+			creditsCtx = newUpstreamAttemptContext(creditsCtx)
+			execOpts := creditsOpts
+			var errIntercept error
+			execOpts = m.withProviderPolicyPool(execOpts, c.auth.Provider)
+			execReq, execOpts, errIntercept = applyRequestAfterAuthInterceptor(creditsCtx, c.executor, c.provider, execReq, execOpts, requestedModelAliasFromOptions(execOpts, routeModel), c.auth)
+			if errIntercept != nil {
+				return cliproxyexecutor.Response{}, true, errIntercept
+			}
+			resp, errExec := c.executor.Execute(creditsCtx, c.auth, execReq, execOpts)
 			result := Result{AuthID: c.auth.ID, Provider: c.provider, Model: resultModel, RouteModel: routeModel, Success: errExec == nil, Options: creditsOpts, CredentialVersion: c.auth.CredentialVersion, RegistrationEpoch: c.auth.RegistrationEpoch}
 			if errExec != nil {
 				result.Error = resultErrorFromError(errExec)

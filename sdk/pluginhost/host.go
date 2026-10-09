@@ -39,6 +39,7 @@ type RuntimeConfig struct {
 // PluginInstanceConfig stores host-owned plugin settings and the original plugin YAML subtree.
 type PluginInstanceConfig struct {
 	Enabled  *bool
+	Required bool
 	Priority int
 	Raw      yaml.Node
 }
@@ -239,6 +240,7 @@ func pluginConfigsToInternal(in map[string]PluginInstanceConfig) map[string]inte
 	for id, item := range in {
 		out[id] = internalconfig.PluginInstanceConfig{
 			Enabled:  item.Enabled,
+			Required: item.Required,
 			Priority: item.Priority,
 			Raw:      *deepCopyYAMLNode(&item.Raw),
 		}

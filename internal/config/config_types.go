@@ -44,6 +44,8 @@ type PluginsConfig struct {
 type PluginInstanceConfig struct {
 	// Enabled toggles this plugin instance. Nil is normalized to false during YAML parsing.
 	Enabled *bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	// Required rejects frontend requests if this security plugin cannot enforce policy.
+	Required bool `yaml:"required,omitempty" json:"required,omitempty"`
 	// Priority controls plugin startup and routing order.
 	Priority int `yaml:"priority,omitempty" json:"priority,omitempty"`
 	// Raw preserves the full original plugin configuration YAML subtree.
@@ -57,6 +59,7 @@ func (c *PluginInstanceConfig) UnmarshalYAML(value *yaml.Node) error {
 	}
 
 	c.Priority = 0
+	c.Required = false
 	defaultEnabled := false
 	c.Enabled = &defaultEnabled
 
@@ -83,6 +86,10 @@ func (c *PluginInstanceConfig) UnmarshalYAML(value *yaml.Node) error {
 				return fmt.Errorf("parse plugin enabled: %w", errDecodeEnabled)
 			}
 			c.Enabled = &enabled
+		case "required":
+			if errRequired := node.Decode(&c.Required); errRequired != nil {
+				return fmt.Errorf("parse plugin required: %w", errRequired)
+			}
 		case "priority":
 			var priority int
 			if errDecodePriority := node.Decode(&priority); errDecodePriority != nil {
@@ -97,10 +104,34 @@ func (c *PluginInstanceConfig) UnmarshalYAML(value *yaml.Node) error {
 
 // MarshalYAML returns the preserved raw plugin YAML subtree for lossless config output.
 func (c PluginInstanceConfig) MarshalYAML() (any, error) {
+	node := deepCopyNode(&c.Raw)
 	if c.Raw.Kind == 0 {
-		return defaultPluginInstanceConfigNode(), nil
+		node = defaultPluginInstanceConfigNode()
 	}
-	return deepCopyNode(&c.Raw), nil
+	hasRequired := false
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		if node.Content[i].Value == "required" {
+			hasRequired = true
+			break
+		}
+	}
+	if c.Required || hasRequired {
+		if node.Kind != yaml.MappingNode {
+			node = defaultPluginInstanceConfigNode()
+		}
+		set := false
+		for i := 0; i+1 < len(node.Content); i += 2 {
+			if node.Content[i].Value == "required" {
+				node.Content[i+1] = &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!bool", Value: strconv.FormatBool(c.Required)}
+				set = true
+				break
+			}
+		}
+		if !set {
+			node.Content = append(node.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "required"}, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!bool", Value: strconv.FormatBool(c.Required)})
+		}
+	}
+	return node, nil
 }
 
 func defaultPluginInstanceConfigNode() *yaml.Node {

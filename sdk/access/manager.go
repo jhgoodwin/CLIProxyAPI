@@ -86,3 +86,13 @@ func (m *Manager) Authenticate(ctx context.Context, r *http.Request) (*Result, *
 	}
 	return nil, NewNoCredentialsError()
 }
+
+// RequiresFrontendAuthentication reports whether credential shortcuts must be disabled.
+func (m *Manager) RequiresFrontendAuthentication() bool {
+	for _, provider := range m.Providers() {
+		if guard, ok := provider.(interface{ RequireFrontendAuthentication() bool }); ok && guard.RequireFrontendAuthentication() {
+			return true
+		}
+	}
+	return false
+}

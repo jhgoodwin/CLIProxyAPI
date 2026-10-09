@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"maps"
 	"net/http"
 	"net/url"
 	"reflect"
 	"strings"
 
+	sdkaccess "github.com/router-for-me/CLIProxyAPI/v8/sdk/access"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 	coreexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginabi"
@@ -108,6 +110,12 @@ func (h *Host) InterceptRequestAfterAuthExcept(ctx context.Context, req pluginap
 }
 
 func (h *Host) interceptRequest(ctx context.Context, req pluginapi.RequestInterceptRequest, method string, invoke func(pluginapi.RequestInterceptor, context.Context, pluginapi.RequestInterceptRequest) (pluginapi.RequestInterceptResponse, error), skipPluginID string) pluginapi.RequestInterceptResponse {
+	req.Principal = sdkaccess.AuthenticatedPrincipal(ctx)
+	requiredIDs := h.configuredRequiredIDs()
+	appliedRequired := make(map[string]bool)
+	if _, unavailable := h.requiredPolicyState(); unavailable {
+		return policyUnavailableResponse()
+	}
 	current := pluginapi.RequestInterceptResponse{
 		Headers: cloneHeader(req.Headers),
 	}
@@ -115,12 +123,33 @@ func (h *Host) interceptRequest(ctx context.Context, req pluginapi.RequestInterc
 	currentBase := req.Body
 	bodyModified := false
 
-	for _, record := range h.activeRecords() {
+	records := h.activeRecords()
+	ordered := make([]capabilityRecord, 0, len(records))
+	for _, record := range records {
+		if !record.plugin.Capabilities.RequestInterceptorRequired {
+			ordered = append(ordered, record)
+		}
+	}
+	for _, record := range records {
+		if record.plugin.Capabilities.RequestInterceptorRequired {
+			ordered = append(ordered, record)
+		}
+	}
+	for _, record := range ordered {
 		interceptor := record.plugin.Capabilities.RequestInterceptor
-		if h.isPluginFused(record.id) || interceptor == nil || record.id == skipPluginID {
+		required := record.plugin.Capabilities.RequestInterceptorRequired
+		if required && (record.plugin.SchemaVersion < pluginabi.SchemaVersionRequiredPolicy || interceptor == nil || h.isPluginFused(record.id) || !h.recordCurrent(record)) {
+			return policyUnavailableResponse()
+		}
+		if h.isPluginFused(record.id) || interceptor == nil || (record.id == skipPluginID && !required) {
 			continue
 		}
 		nextReq := req
+		nextReq.ProviderPoolAuthIDs = append([]string(nil), req.ProviderPoolAuthIDs...)
+		nextReq.ProviderPoolQuota = append([]pluginapi.ProviderQuotaObservation(nil), req.ProviderPoolQuota...)
+		for i := range nextReq.ProviderPoolQuota {
+			nextReq.ProviderPoolQuota[i].Signals = maps.Clone(nextReq.ProviderPoolQuota[i].Signals)
+		}
 		nextReq.Headers = cloneHeader(current.Headers)
 		if len(currentBase) > 0 {
 			nextReq.Body = bytes.Clone(currentBase)
@@ -137,6 +166,12 @@ func (h *Host) interceptRequest(ctx context.Context, req pluginapi.RequestInterc
 		if resp, ok := h.callRequestInterceptor(ctx, record, method, func(callCtx context.Context, callReq pluginapi.RequestInterceptRequest) (pluginapi.RequestInterceptResponse, error) {
 			return invoke(interceptor, callCtx, callReq)
 		}, nextReq); ok {
+			if required {
+				if !h.recordCurrent(record) || h.isPluginFused(record.id) {
+					return policyUnavailableResponse()
+				}
+				appliedRequired[record.id] = true
+			}
 			current.Headers = mergeHeaders(current.Headers, resp.Headers, resp.ClearHeaders)
 			if len(resp.Body) > 0 {
 				currentBase = bytes.Clone(resp.Body)
@@ -152,6 +187,16 @@ func (h *Host) interceptRequest(ctx context.Context, req pluginapi.RequestInterc
 				current.ResponseBody = bytes.Clone(resp.ResponseBody)
 				break
 			}
+		} else if required {
+			return policyUnavailableResponse()
+		}
+	}
+	for id := range h.configuredRequiredIDs() {
+		requiredIDs[id] = true
+	}
+	for id := range requiredIDs {
+		if !appliedRequired[id] {
+			return policyUnavailableResponse()
 		}
 	}
 	if bodyModified {
@@ -378,10 +423,16 @@ func streamChunkOmitsHistory(schemaVersion uint32) bool {
 }
 
 func (h *Host) HasRequestInterceptors() bool {
+	if required, _ := h.requiredPolicyState(); required {
+		return true
+	}
 	if h == nil {
 		return false
 	}
 	for _, record := range h.activeRecords() {
+		if record.plugin.Capabilities.RequestInterceptorRequired {
+			return true
+		}
 		if h.isPluginFused(record.id) {
 			continue
 		}

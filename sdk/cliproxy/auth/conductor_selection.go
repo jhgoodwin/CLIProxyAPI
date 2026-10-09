@@ -967,6 +967,10 @@ func (m *Manager) pickViaPluginScheduler(ctx context.Context, scheduler PluginSc
 		Options:    schedulerOptions(opts),
 		Candidates: schedulerAuthCandidates(candidates),
 	}
+	req.ProviderPools = make(map[string][]pluginapi.ProviderQuotaObservation, len(req.Providers))
+	for _, poolProvider := range req.Providers {
+		req.ProviderPools[strings.ToLower(strings.TrimSpace(poolProvider))] = m.providerPoolQuota(poolProvider)
+	}
 	resp, handled, errPick := scheduler.PickAuth(ctx, req)
 	if errPick != nil {
 		return nil, true, errPick

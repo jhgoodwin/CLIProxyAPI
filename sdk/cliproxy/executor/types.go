@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/url"
 
+	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
 	sdktranslator "github.com/router-for-me/CLIProxyAPI/v8/sdk/translator"
 )
 
@@ -103,6 +104,12 @@ type RequestAfterAuthInterceptor func(context.Context, RequestAfterAuthIntercept
 
 // RequestAfterAuthInterceptRequest describes a selected-auth request before executor translation.
 type RequestAfterAuthInterceptRequest struct {
+	ProviderPoolQuota []pluginapi.ProviderQuotaObservation
+	// ProviderPoolAuthIDs lists all enabled credentials in the selected provider pool, including temporarily unavailable accounts.
+	ProviderPoolAuthIDs []string
+	Provider            string
+	AuthID              string
+	AttemptID           string
 	// SourceFormat is the original client protocol format.
 	SourceFormat sdktranslator.Format
 	// ToFormat is the selected upstream protocol format.
@@ -216,6 +223,12 @@ type Options struct {
 	Metadata map[string]any
 	// RequestAfterAuthInterceptor runs after credential selection and before executor translation.
 	RequestAfterAuthInterceptor RequestAfterAuthInterceptor
+	// RequestAfterAuthInterceptorRequired repeats policy authorization for refreshed retries.
+	RequestAfterAuthInterceptorRequired bool
+	// ProviderPoolQuota is a host snapshot for policy authorization.
+	ProviderPoolQuota []pluginapi.ProviderQuotaObservation
+	// ProviderPoolAuthIDs is a host snapshot for policy authorization.
+	ProviderPoolAuthIDs []string
 	// WebSocketResponseObserver receives upstream WebSocket response events during execution.
 	WebSocketResponseObserver WebSocketResponseObserver
 	// ExecutionLifecycle owns Home-dispatched execution resources. Executors must not add it to request metadata.

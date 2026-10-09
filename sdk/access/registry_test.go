@@ -61,7 +61,7 @@ func TestRegisteredProvidersRestoresAllProvidersAfterExclusiveCleared(t *testing
 	}
 }
 
-func TestRegisteredProvidersIgnoresStaleExclusiveProvider(t *testing.T) {
+func TestRegisteredProvidersRejectsStaleExclusiveProvider(t *testing.T) {
 	UnregisterProvider("test-a")
 	UnregisterProvider("missing")
 	ClearExclusiveProvider()
@@ -75,7 +75,7 @@ func TestRegisteredProvidersIgnoresStaleExclusiveProvider(t *testing.T) {
 	if len(providers) != 1 {
 		t.Fatalf("RegisteredProviders() len = %d, want 1", len(providers))
 	}
-	if providers[0].Identifier() != "test-a" {
-		t.Fatalf("RegisteredProviders()[0] = %q, want test-a", providers[0].Identifier())
+	if _, errAuth := providers[0].Authenticate(context.Background(), nil); errAuth == nil {
+		t.Fatal("missing exclusive provider fell back to normal authentication")
 	}
 }

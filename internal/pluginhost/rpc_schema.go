@@ -33,6 +33,7 @@ type rpcCapabilities struct {
 	ExecutorOutputFormats         []string                     `json:"executor_output_formats,omitempty"`
 	RequestTranslator             bool                         `json:"request_translator"`
 	RequestNormalizer             bool                         `json:"request_normalizer"`
+	RequestInterceptorRequired    bool                         `json:"request_interceptor_required"`
 	RequestInterceptor            bool                         `json:"request_interceptor"`
 	RequestLifecyclePlugin        bool                         `json:"request_lifecycle_plugin"`
 	ResponseTranslator            bool                         `json:"response_translator"`
@@ -176,6 +177,7 @@ func rpcCapabilitiesFromPlugin(plugin pluginapi.Plugin) rpcCapabilities {
 		RequestTranslator:             caps.RequestTranslator != nil,
 		RequestNormalizer:             caps.RequestNormalizer != nil,
 		RequestInterceptor:            caps.RequestInterceptor != nil,
+		RequestInterceptorRequired:    caps.RequestInterceptorRequired,
 		RequestLifecyclePlugin:        caps.RequestLifecyclePlugin != nil,
 		ResponseTranslator:            caps.ResponseTranslator != nil,
 		ResponseBeforeTranslator:      caps.ResponseBeforeTranslator != nil,

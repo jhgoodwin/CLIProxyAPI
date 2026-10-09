@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/interfaces"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/logging"
+	sdkaccess "github.com/router-for-me/CLIProxyAPI/v8/sdk/access"
 	coreexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
 	"golang.org/x/net/context"
@@ -485,6 +486,7 @@ func (h *BaseAPIHandler) applyRequestInterceptorsBeforeAuth(ctx context.Context,
 		return req, opts, nil
 	}
 	resp := interceptRequestBeforeAuth(ctx, host, pluginapi.RequestInterceptRequest{
+		Principal:      sdkaccess.AuthenticatedPrincipal(ctx),
 		RequestID:      requestID,
 		TraceID:        logging.GetRequestID(ctx),
 		SourceFormat:   handlerType,
@@ -574,16 +576,22 @@ func (h *BaseAPIHandler) applyRequestInterceptorsAfterAuth(ctx context.Context, 
 		return coreexecutor.RequestAfterAuthInterceptResponse{}
 	}
 	resp := interceptRequestAfterAuth(ctx, host, pluginapi.RequestInterceptRequest{
-		RequestID:      requestID,
-		TraceID:        logging.GetRequestID(ctx),
-		SourceFormat:   req.SourceFormat.String(),
-		ToFormat:       req.ToFormat.String(),
-		Model:          req.Model,
-		RequestedModel: req.RequestedModel,
-		Stream:         req.Stream,
-		Headers:        cloneHeader(req.Headers),
-		Body:           req.Body,
-		Metadata:       req.Metadata,
+		ProviderPoolQuota:   append([]pluginapi.ProviderQuotaObservation(nil), req.ProviderPoolQuota...),
+		ProviderPoolAuthIDs: append([]string(nil), req.ProviderPoolAuthIDs...),
+		Provider:            req.Provider,
+		AuthID:              req.AuthID,
+		AttemptID:           req.AttemptID,
+		Principal:           sdkaccess.AuthenticatedPrincipal(ctx),
+		RequestID:           requestID,
+		TraceID:             logging.GetRequestID(ctx),
+		SourceFormat:        req.SourceFormat.String(),
+		ToFormat:            req.ToFormat.String(),
+		Model:               req.Model,
+		RequestedModel:      req.RequestedModel,
+		Stream:              req.Stream,
+		Headers:             cloneHeader(req.Headers),
+		Body:                req.Body,
+		Metadata:            req.Metadata,
 	}, skipPluginID)
 	return coreexecutor.RequestAfterAuthInterceptResponse{
 		Path:            strings.TrimSpace(resp.Path),
@@ -727,4 +735,9 @@ func (h *BaseAPIHandler) WriteModelListResponse(c *gin.Context, sourceFormat str
 	c.Set("API_RESPONSE", cloneBytes(body))
 	c.Status(http.StatusOK)
 	_, _ = c.Writer.Write(body)
+}
+
+func (h *BaseAPIHandler) requiredRequestPolicy() bool {
+	host, ok := h.interceptorHost().(interface{ HasRequiredRequestPolicy() bool })
+	return ok && host.HasRequiredRequestPolicy()
 }

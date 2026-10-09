@@ -17,7 +17,11 @@ const (
 	// Version 6 preserves raw JSON bodies for plugin management responses.
 	// Plugins that still require HTML entity escaping on JSON response strings
 	// should keep schema_version < 6.
-	SchemaVersion uint32 = 6
+	// Version 7 adds required request policies, trusted principal/provider/pool snapshots,
+	// attempt correlation, and canonical token accounting.
+	SchemaVersion uint32 = 7
+	// SchemaVersionRequiredPolicy introduces trusted policy identity, quota inventory, and usage correlation.
+	SchemaVersionRequiredPolicy uint32 = 7
 	// SchemaVersionStreamChunkOmitRequestBody is the first schema version that omits
 	// request bodies on payload stream-chunk interceptor calls.
 	SchemaVersionStreamChunkOmitRequestBody uint32 = 3

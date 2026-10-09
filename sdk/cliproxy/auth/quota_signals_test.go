@@ -377,7 +377,7 @@ func TestObserveResponseHeadersTruncatesDeterministically(t *testing.T) {
 func TestProviderSupportsQuotaObservation(t *testing.T) {
 	for _, provider := range []string{
 		"", "kimi", "xai", "grok", "antigravity", "gemini", "gemini-interactions",
-		"vertex", "aistudio", "openai", "openai-compatibility", "third-party-plugin",
+		"vertex", "aistudio", "third-party-plugin", "openai", "openai-compatibility", "groq", "nim",
 		"XAI", " Grok ", " Gemini ",
 	} {
 		if ProviderSupportsQuotaObservation(provider) {
@@ -681,5 +681,17 @@ func TestObserveResponseHeadersKeepsPrimaryWhenTruncatingAdditional(t *testing.T
 	}
 	if len(quota.Signals) != maxQuotaSignalHeaders {
 		t.Fatalf("snapshot size = %d, want %d", len(quota.Signals), maxQuotaSignalHeaders)
+	}
+}
+
+func TestGenericProviderQuotaSignals(t *testing.T) {
+	for _, provider := range []string{"openai", "openai-compatibility", "deepseek", "cerebras", "nvidia", "nim", "nvidia-nim", "openrouter", "groq", "vllm", "my-private-openai"} {
+		q := QuotaState{}
+		if !q.ObserveResponseHeadersForProvider(provider, http.Header{"X-Ratelimit-Limit-Tokens": {"100"}, "X-Ratelimit-Remaining-Tokens": {"60"}, "X-Ratelimit-Reset-Tokens": {"1m"}, "Authorization": {"secret"}}, time.Unix(1000, 0)) {
+			t.Fatal(provider)
+		}
+		if len(q.Signals) != 3 || q.Signals["Authorization"] != "" {
+			t.Fatalf("unexpected quota signals: %#v", q.Signals)
+		}
 	}
 }

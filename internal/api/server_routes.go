@@ -567,7 +567,7 @@ func (s *Server) AttachWebsocketRoute(path string, handler http.Handler) {
 
 	authMiddleware := AuthMiddleware(s.accessManager)
 	conditionalAuth := func(c *gin.Context) {
-		if !s.wsAuthEnabled.Load() {
+		if !s.wsAuthEnabled.Load() && !s.accessManager.RequiresFrontendAuthentication() {
 			c.Next()
 			return
 		}

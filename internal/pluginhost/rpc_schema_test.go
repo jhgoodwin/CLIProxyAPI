@@ -471,3 +471,21 @@ func TestSanitizePluginRequestScheduler(t *testing.T) {
 		t.Fatalf("scheduler candidate metadata drop survived sanitize: %#v", gotCandidate.Metadata)
 	}
 }
+
+func TestRPCCapabilitiesIncludeRequiredPolicy(t *testing.T) {
+	caps := rpcCapabilitiesFromPlugin(pluginapi.Plugin{Capabilities: pluginapi.Capabilities{RequestInterceptor: passingPolicy(), RequestInterceptorRequired: true}})
+	if !caps.RequestInterceptorRequired {
+		t.Fatal("required policy capability omitted from RPC registration")
+	}
+	raw, err := json.Marshal(caps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded map[string]any
+	if err = json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded["request_interceptor_required"] != true {
+		t.Fatalf("RPC policy capability=%s", raw)
+	}
+}

@@ -10,6 +10,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/logging"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/thinking"
+	coreexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
 	coreusage "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/usage"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
 	sdktranslator "github.com/router-for-me/CLIProxyAPI/v8/sdk/translator"
@@ -168,6 +169,7 @@ func (a *usageAdapter) HandleUsage(ctx context.Context, record coreusage.Record)
 		traceID = strings.TrimSpace(logging.GetRequestID(ctx))
 	}
 	plugin.HandleUsage(ctx, pluginapi.UsageRecord{
+		AttemptID:           coreexecutor.AttemptIDFromContext(ctx),
 		RequestID:           requestID,
 		TraceID:             traceID,
 		Provider:            record.Provider,
@@ -197,6 +199,7 @@ func (a *usageAdapter) HandleUsage(ctx context.Context, record coreusage.Record)
 			Body:       record.Fail.Body,
 		},
 		Detail: pluginapi.UsageDetail{
+			TokenBreakdown:      record.Detail.TokenBreakdown,
 			InputTokens:         record.Detail.InputTokens,
 			OutputTokens:        record.Detail.OutputTokens,
 			ReasoningTokens:     record.Detail.ReasoningTokens,

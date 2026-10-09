@@ -4,6 +4,7 @@ package pluginapi
 import (
 	"context"
 	"encoding/json"
+	coreusage "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/usage"
 	"net/http"
 	"net/url"
 	"time"
@@ -110,6 +111,8 @@ type Capabilities struct {
 	ResponseAfterTranslator ResponseNormalizer
 	// RequestInterceptor rewrites execution requests before and after credential selection.
 	RequestInterceptor RequestInterceptor
+	// RequestInterceptorRequired makes interceptor failures reject execution. Configure required: true to also guard activation failures.
+	RequestInterceptorRequired bool
 	// RequestLifecyclePlugin asynchronously receives one terminal event for each request that reached request interception.
 	RequestLifecyclePlugin RequestLifecyclePlugin
 	// ResponseInterceptor rewrites successful non-streaming HTTP execution responses before downstream delivery.
@@ -484,6 +487,8 @@ type ModelRouter interface {
 
 // SchedulerPickRequest describes the routing context offered to a scheduler plugin.
 type SchedulerPickRequest struct {
+	// ProviderPools contains all enabled credentials and latest quota observations per provider, including temporarily unavailable accounts.
+	ProviderPools map[string][]ProviderQuotaObservation
 	// Plugin is the metadata of the plugin being executed.
 	Plugin Metadata
 	// Provider is the primary provider key requested by the route.
@@ -1128,7 +1133,25 @@ type ResponseTransformRequest struct {
 }
 
 // RequestInterceptRequest describes a request about to be executed upstream.
+// ProviderQuotaObservation is a trusted latest upstream quota snapshot for one enabled credential.
+type ProviderQuotaObservation struct {
+	AuthID     string
+	ObservedAt time.Time
+	Signals    map[string]string
+}
+
 type RequestInterceptRequest struct {
+	// ProviderPoolQuota contains latest observations for the enabled provider pool.
+	ProviderPoolQuota []ProviderQuotaObservation
+	// ProviderPoolAuthIDs lists all enabled credentials in the selected provider pool, including temporarily unavailable accounts.
+	ProviderPoolAuthIDs []string
+	// Principal is the authenticated frontend subject, supplied by the host.
+	Principal string
+	// Provider and AuthID identify the selected upstream credential; empty before selection.
+	Provider string
+	AuthID   string
+	// AttemptID correlates this selected attempt with usage settlement.
+	AttemptID string
 	// RequestID uniquely identifies one model execution and correlates it with RequestCompletion.
 	RequestID string
 	// TraceID identifies the parent inbound HTTP request when available.
@@ -1484,6 +1507,8 @@ type ManagementResponse struct {
 
 // UsageRecord describes request usage and billing metadata.
 type UsageRecord struct {
+	// AttemptID identifies the authorized upstream attempt when available.
+	AttemptID string
 	// RequestID uniquely identifies this specific model execution instance (UUID v4).
 	RequestID string
 	// TraceID identifies the parent inbound HTTP request when available (8-character hex).
@@ -1551,6 +1576,8 @@ type UsageFailure struct {
 
 // UsageDetail contains token accounting counters.
 type UsageDetail struct {
+	// TokenBreakdown carries canonical mutually exclusive token buckets and accounting quality.
+	TokenBreakdown coreusage.TokenBreakdown
 	// InputTokens is the prompt or input token count.
 	InputTokens int64
 	// OutputTokens is the completion or output token count.

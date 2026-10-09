@@ -55,7 +55,11 @@ func (h *Host) RegisterFrontendAuthProviders() {
 		}
 	}
 
-	if bestExclusive.key != "" {
+	if required, _ := h.requiredPolicyState(); required {
+		sdkaccess.RegisterProvider(requiredPolicyAccessKey, &requiredPolicyAccess{host: h})
+		nextKeys[requiredPolicyAccessKey] = struct{}{}
+		sdkaccess.SetExclusiveProvider(requiredPolicyAccessKey)
+	} else if bestExclusive.key != "" {
 		sdkaccess.SetExclusiveProvider(bestExclusive.key)
 	} else {
 		sdkaccess.ClearExclusiveProvider()

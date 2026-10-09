@@ -12,14 +12,26 @@ const (
 	maxQuotaSignalValue   = 512
 )
 
-// ProviderSupportsQuotaObservation reports whether the named provider emits a
-// passive credential-level quota snapshot understood by collectQuotaSignals.
+// ProviderSupportsQuotaObservation reports support for provider-specific quota
+// namespaces. Generic numeric rate-limit headers are observed independently;
+// they do not expand the legacy management API's provider-specific contract.
 func ProviderSupportsQuotaObservation(provider string) bool {
 	switch strings.ToLower(strings.TrimSpace(provider)) {
 	case "claude", "codex", "devin":
 		return true
 	default:
 		return false
+	}
+}
+
+// supportsGenericQuota permits configured OpenAI-compatible provider names.
+// Providers with incompatible existing quota semantics remain excluded.
+func supportsGenericQuota(provider string) bool {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "", "kimi", "xai", "grok", "antigravity", "gemini", "gemini-interactions", "vertex", "aistudio":
+		return false
+	default:
+		return true
 	}
 }
 
@@ -38,7 +50,7 @@ func (q *QuotaState) ObserveResponseHeadersForProvider(provider string, headers 
 	if q == nil {
 		return false
 	}
-	if !ProviderSupportsQuotaObservation(provider) {
+	if !ProviderSupportsQuotaObservation(provider) && !supportsGenericQuota(provider) {
 		return q.ClearObservationSignals()
 	}
 	next := collectQuotaSignals(provider, headers)
@@ -177,10 +189,15 @@ func isQuotaSignalHeaderForProvider(provider, name string) bool {
 		return provider == "claude"
 	}
 	if strings.HasPrefix(name, "x-ratelimit-") {
-		// Observed Codex responses do not carry x-ratelimit-* headers; the only
-		// upstream seen emitting them is Grok, which is excluded from quota
-		// observation. The rule is kept so a future Codex rollout is captured
-		// without another change, but it is expected to be inert today.
+		for _, suffix := range []string{"", "-requests", "-tokens"} {
+			for _, metric := range []string{"limit", "remaining", "reset"} {
+				if name == "x-ratelimit-"+metric+suffix {
+					return supportsGenericQuota(provider)
+				}
+			}
+		}
+		// Keep additional Codex numeric signal namespaces without inferring
+		// capacity for providers that do not emit a complete quota triple.
 		return provider == "codex"
 	}
 	if !strings.HasPrefix(name, "x-codex-") {

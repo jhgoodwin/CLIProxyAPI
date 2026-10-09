@@ -214,14 +214,14 @@ func (h *Host) ApplyConfig(ctx context.Context, cfg *config.Config) {
 		return
 	}
 
+	h.mu.Lock()
+	h.runtimeConfig = cfg
+	h.mu.Unlock()
 	rc, errRuntimeConfig := runtimeConfigFromConfig(cfg)
 	if errRuntimeConfig != nil {
 		log.WithError(errRuntimeConfig).Error("failed to apply plugin runtime config")
 		return
 	}
-	h.mu.Lock()
-	h.runtimeConfig = cfg
-	h.mu.Unlock()
 
 	if !rc.Enabled {
 		h.detachUnselectedPlugins(ctx, nil)

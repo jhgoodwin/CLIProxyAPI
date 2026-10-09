@@ -15,16 +15,19 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/logging"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/util"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
 	cliproxysession "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/session"
 	coreusage "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/usage"
+	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
 	sdktranslator "github.com/router-for-me/CLIProxyAPI/v8/sdk/translator"
 	log "github.com/sirupsen/logrus"
 )
 
 func newUpstreamAttemptContext(ctx context.Context) context.Context {
+	ctx = cliproxyexecutor.WithAttemptID(ctx, uuid.NewString())
 	ctx = logging.WithFreshResponseHeadersHolder(ctx)
 	return cliproxyexecutor.WithUpstreamAttemptTracker(ctx)
 }
@@ -328,20 +331,37 @@ func isRequestTerminatedError(err error) bool {
 	return errors.As(err, &terminated) && terminated != nil
 }
 
-func applyRequestAfterAuthInterceptor(ctx context.Context, executor ProviderExecutor, provider string, req cliproxyexecutor.Request, opts cliproxyexecutor.Options, requestedModel string) (cliproxyexecutor.Request, cliproxyexecutor.Options, error) {
+func applyRequestAfterAuthInterceptor(ctx context.Context, executor ProviderExecutor, provider string, req cliproxyexecutor.Request, opts cliproxyexecutor.Options, requestedModel string, selected ...*Auth) (cliproxyexecutor.Request, cliproxyexecutor.Options, error) {
 	if opts.RequestAfterAuthInterceptor == nil {
+		if opts.RequestAfterAuthInterceptorRequired {
+			return req, opts, &cliproxyexecutor.RequestTerminatedError{HTTPStatus: http.StatusServiceUnavailable, Body: []byte(`{"error":{"message":"required request policy unavailable"}}`)}
+		}
 		return req, opts, nil
 	}
+	authID := ""
+	if len(selected) > 0 && selected[0] != nil {
+		authID = selected[0].ID
+		provider = selected[0].Provider
+	}
 	toFormat := requestToFormat(provider, executor, req, opts)
+	quotas := append([]pluginapi.ProviderQuotaObservation(nil), opts.ProviderPoolQuota...)
+	for i := range quotas {
+		quotas[i].Signals = maps.Clone(quotas[i].Signals)
+	}
 	resp := opts.RequestAfterAuthInterceptor(ctx, cliproxyexecutor.RequestAfterAuthInterceptRequest{
-		SourceFormat:   opts.SourceFormat,
-		ToFormat:       toFormat,
-		Model:          req.Model,
-		RequestedModel: requestedModel,
-		Stream:         opts.Stream,
-		Headers:        cloneRequestHeaders(opts.Headers),
-		Body:           req.Payload,
-		Metadata:       opts.Metadata,
+		ProviderPoolQuota:   quotas,
+		ProviderPoolAuthIDs: append([]string(nil), opts.ProviderPoolAuthIDs...),
+		Provider:            provider,
+		AuthID:              authID,
+		AttemptID:           cliproxyexecutor.AttemptIDFromContext(ctx),
+		SourceFormat:        opts.SourceFormat,
+		ToFormat:            toFormat,
+		Model:               req.Model,
+		RequestedModel:      requestedModel,
+		Stream:              opts.Stream,
+		Headers:             cloneRequestHeaders(opts.Headers),
+		Body:                req.Payload,
+		Metadata:            opts.Metadata,
 	})
 	opts.Headers = mergeRequestHeaders(opts.Headers, resp.Headers, resp.ClearHeaders)
 	if len(resp.Body) > 0 {
@@ -585,7 +605,8 @@ func (m *Manager) executeMixedOnce(ctx context.Context, providers []string, req 
 			}
 			execOpts.Metadata = ensureCanonicalSessionMetadata(execOpts.Metadata, execOpts.Headers, payload)
 			var errIntercept error
-			execReq, execOpts, errIntercept = applyRequestAfterAuthInterceptor(execCtx, executor, provider, execReq, execOpts, requestedModelAliasFromOptions(execOpts, routeModel))
+			execOpts = m.withProviderPolicyPool(execOpts, auth.Provider)
+			execReq, execOpts, errIntercept = applyRequestAfterAuthInterceptor(execCtx, executor, provider, execReq, execOpts, requestedModelAliasFromOptions(execOpts, routeModel), auth)
 			if errIntercept != nil {
 				return cliproxyexecutor.Response{}, errIntercept
 			}
@@ -608,6 +629,13 @@ func (m *Manager) executeMixedOnce(ctx context.Context, providers []string, req 
 					didRefreshOnUnauthorized = true
 					execCtx = newUpstreamAttemptContext(execCtx)
 					execCtx = syncMetadataSessionToContext(execCtx, execOpts.Metadata)
+					if execOpts.RequestAfterAuthInterceptorRequired {
+						execOpts = m.withProviderPolicyPool(execOpts, auth.Provider)
+						execReq, execOpts, errIntercept = applyRequestAfterAuthInterceptor(execCtx, executor, provider, execReq, execOpts, requestedModelAliasFromOptions(execOpts, routeModel), auth)
+						if errIntercept != nil {
+							return cliproxyexecutor.Response{}, errIntercept
+						}
+					}
 					startRetry := time.Now()
 					resp, errExec = executor.Execute(execCtx, auth, execReq, execOpts)
 					errExec = markUpstreamExecutionAttemptFromContext(execCtx, errExec)
@@ -797,7 +825,8 @@ func (m *Manager) executeCountMixedOnce(ctx context.Context, providers []string,
 			}
 			execOpts.Metadata = ensureCanonicalSessionMetadata(execOpts.Metadata, execOpts.Headers, payload)
 			var errIntercept error
-			execReq, execOpts, errIntercept = applyRequestAfterAuthInterceptor(execCtx, executor, provider, execReq, execOpts, requestedModelAliasFromOptions(execOpts, routeModel))
+			execOpts = m.withProviderPolicyPool(execOpts, auth.Provider)
+			execReq, execOpts, errIntercept = applyRequestAfterAuthInterceptor(execCtx, executor, provider, execReq, execOpts, requestedModelAliasFromOptions(execOpts, routeModel), auth)
 			if errIntercept != nil {
 				return cliproxyexecutor.Response{}, errIntercept
 			}
@@ -820,6 +849,13 @@ func (m *Manager) executeCountMixedOnce(ctx context.Context, providers []string,
 					didRefreshOnUnauthorized = true
 					execCtx = newUpstreamAttemptContext(execCtx)
 					execCtx = syncMetadataSessionToContext(execCtx, execOpts.Metadata)
+					if execOpts.RequestAfterAuthInterceptorRequired {
+						execOpts = m.withProviderPolicyPool(execOpts, auth.Provider)
+						execReq, execOpts, errIntercept = applyRequestAfterAuthInterceptor(execCtx, executor, provider, execReq, execOpts, requestedModelAliasFromOptions(execOpts, routeModel), auth)
+						if errIntercept != nil {
+							return cliproxyexecutor.Response{}, errIntercept
+						}
+					}
 					startRetry := time.Now()
 					resp, errExec = executor.CountTokens(execCtx, auth, execReq, execOpts)
 					errExec = markUpstreamExecutionAttemptFromContext(execCtx, errExec)
@@ -1195,6 +1231,9 @@ func (m *Manager) executeStreamMixedOnce(ctx context.Context, providers []string
 			}
 			if errCtx := execCtx.Err(); errCtx != nil && ctx != nil && ctx.Err() != nil {
 				return nil, errCtx
+			}
+			if isRequestTerminatedError(errStream) || isRequestStopError(errStream) {
+				return nil, errStream
 			}
 			action, okAction := matchRequestScopedErrorAction(auth, errStream, m.runtimeConfigSnapshot())
 			if okAction {
@@ -2166,4 +2205,37 @@ func syncMetadataSessionToContext(ctx context.Context, metadata map[string]any) 
 	}
 	ctx = logging.WithClientRequestMetadata(ctx, clientMeta)
 	return util.WithSessionID(ctx, clientMeta.SessionID)
+}
+
+// providerPoolAuthIDs counts configured capacity, not momentary scheduler availability.
+func (m *Manager) providerPoolAuthIDs(provider string) []string {
+	observations := m.providerPoolQuota(provider)
+	ids := make([]string, 0, len(observations))
+	for _, observation := range observations {
+		ids = append(ids, observation.AuthID)
+	}
+	return ids
+}
+
+func (m *Manager) providerPoolQuota(provider string) []pluginapi.ProviderQuotaObservation {
+	observations := make([]pluginapi.ProviderQuotaObservation, 0)
+	for _, auth := range m.List() {
+		if auth != nil && !auth.Disabled && auth.Status != StatusDisabled && strings.EqualFold(auth.Provider, provider) {
+			observations = append(observations, pluginapi.ProviderQuotaObservation{AuthID: auth.ID, ObservedAt: auth.Quota.ObservedAt, Signals: maps.Clone(auth.Quota.Signals)})
+		}
+	}
+	sort.Slice(observations, func(i, j int) bool { return observations[i].AuthID < observations[j].AuthID })
+	return observations
+}
+
+func (m *Manager) withProviderPolicyPool(opts cliproxyexecutor.Options, provider string) cliproxyexecutor.Options {
+	if opts.RequestAfterAuthInterceptor == nil {
+		return opts
+	}
+	opts.ProviderPoolQuota = m.providerPoolQuota(provider)
+	opts.ProviderPoolAuthIDs = make([]string, 0, len(opts.ProviderPoolQuota))
+	for _, observation := range opts.ProviderPoolQuota {
+		opts.ProviderPoolAuthIDs = append(opts.ProviderPoolAuthIDs, observation.AuthID)
+	}
+	return opts
 }
