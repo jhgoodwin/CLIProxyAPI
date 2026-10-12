@@ -3,7 +3,6 @@ package pluginhost
 import (
 	"context"
 	"errors"
-	"gopkg.in/yaml.v3"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -12,6 +11,7 @@ import (
 	sdkaccess "github.com/router-for-me/CLIProxyAPI/v8/sdk/access"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginabi"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
+	"gopkg.in/yaml.v3"
 )
 
 func requiredPolicyRecord(id string, interceptor pluginapi.RequestInterceptor) capabilityRecord {
@@ -167,6 +167,93 @@ func TestRequiredPolicyStaleFrontendManagerFailsClosedOnUnload(t *testing.T) {
 	}
 	if !manager.RequiresFrontendAuthentication() {
 		t.Fatal("realtime credential shortcut remains enabled")
+	}
+}
+
+func TestIdentityRequiredPolicyFilesBoundary(t *testing.T) {
+	calls := 0
+	record := requiredPolicyRecord("tenant-policy", passingPolicy())
+	record.plugin.Capabilities.FrontendAuthProvider = frontendAuthProviderFunc{identifier: "tenant", authenticate: func(_ context.Context, req pluginapi.FrontendAuthRequest) (pluginapi.FrontendAuthResponse, error) {
+		calls++
+		return pluginapi.FrontendAuthResponse{Authenticated: req.Headers.Get("Authorization") == "Bearer tenant-key", Principal: "tenant"}, nil
+	}}
+	h := newHostWithRecords(record)
+	requirePolicyConfig(h, "tenant-policy")
+	item := h.runtimeConfig.Plugins.Configs["tenant-policy"]
+	var node yaml.Node
+	if err := yaml.Unmarshal([]byte("mode: identity\n"), &node); err != nil {
+		t.Fatal(err)
+	}
+	item.Raw = *node.Content[0]
+	h.runtimeConfig.Plugins.Configs["tenant-policy"] = item
+	a := &requiredPolicyAccess{host: h}
+	paths := map[string]map[string]bool{
+		"/v1/files":                    {http.MethodGet: true, http.MethodPost: true},
+		"/v1/files/file-123":           {http.MethodGet: true, http.MethodDelete: true},
+		"/v1/files/file-123/content":   {http.MethodGet: true},
+		"/v1/files/":                   {},
+		"/v1/files//content":           {},
+		"/v1/files/.":                  {},
+		"/v1/files/..":                 {},
+		"/v1/files/file-123/unknown":   {},
+		"/v1/files/file-123/content/x": {},
+		"/v1/files/file-123/other/x":   {},
+		"/v1/files-other":              {},
+	}
+	for path, allowed := range paths {
+		for _, method := range []string{http.MethodGet, http.MethodPost, http.MethodDelete, http.MethodPut, http.MethodPatch, http.MethodHead, http.MethodOptions} {
+			t.Run(method+" "+path, func(t *testing.T) {
+				if got := identityAPIPath(method, path); got != allowed[method] {
+					t.Fatalf("identityAPIPath = %v, want %v", got, allowed[method])
+				}
+				// Authenticate normalizes a single trailing slash for all routes.
+				if path == "/v1/files/" {
+					return
+				}
+				req := httptest.NewRequest(method, path, nil)
+				req.Header.Set("Authorization", "Bearer tenant-key")
+				before := calls
+				result, err := a.Authenticate(context.Background(), req)
+				if allowed[method] {
+					if err != nil || result == nil || result.Principal != "tenant" || calls != before+1 {
+						t.Fatalf("required authentication: result=%#v error=%v calls=%d", result, err, calls-before)
+					}
+					req.Header.Del("Authorization")
+					if _, err := a.Authenticate(context.Background(), req); err == nil {
+						t.Fatal("file route bypassed frontend authentication")
+					}
+				} else if err == nil || calls != before {
+					t.Fatalf("unsupported route reached authentication: error=%v calls=%d", err, calls-before)
+				}
+			})
+		}
+	}
+	for _, state := range []string{"quota", "home", "unavailable"} {
+		t.Run(state, func(t *testing.T) {
+			if state == "quota" {
+				if err := yaml.Unmarshal([]byte("mode: quota\n"), &item.Raw); err != nil {
+					t.Fatal(err)
+				}
+				h.runtimeConfig.Plugins.Configs["tenant-policy"] = item
+			} else {
+				item.Raw = *node.Content[0]
+				h.runtimeConfig.Plugins.Configs["tenant-policy"] = item
+			}
+			h.runtimeConfig.Home.Enabled = state == "home"
+			if state == "unavailable" {
+				setHostSnapshotForTest(h, true)
+			}
+			for path, methods := range paths {
+				for method := range methods {
+					req := httptest.NewRequest(method, path, nil)
+					req.Header.Set("Authorization", "Bearer tenant-key")
+					before := calls
+					if _, err := a.Authenticate(context.Background(), req); err == nil || calls != before {
+						t.Fatalf("%s allowed %s %s", state, method, path)
+					}
+				}
+			}
+		})
 	}
 }
 

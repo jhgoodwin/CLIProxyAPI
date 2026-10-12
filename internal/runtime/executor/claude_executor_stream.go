@@ -249,6 +249,9 @@ func (e *ClaudeExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.A
 			return nil, fmt.Errorf("sign Claude CCH: %w", err)
 		}
 	}
+	if errFile := helps.ValidateFilePayload(ctx, bodyForUpstream); errFile != nil {
+		return nil, errFile
+	}
 	// Read-only validation must observe the final configured model and messages.
 	if errMidSystem := validateClaudeMidSystemMessageModel(bodyForUpstream, confirmedClaudeCode, isAnthropicUpstreamBase(baseURL)); errMidSystem != nil {
 		return nil, errMidSystem

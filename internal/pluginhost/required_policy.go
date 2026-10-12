@@ -186,6 +186,19 @@ func (h *Host) identityOnlyPolicy() bool {
 }
 
 func identityAPIPath(method, path string) bool {
+	if path == "/v1/files" {
+		return method == http.MethodGet || method == http.MethodPost
+	}
+	if strings.HasPrefix(path, "/v1/files/") {
+		parts := strings.Split(strings.TrimPrefix(path, "/v1/files/"), "/")
+		if parts[0] == "" || parts[0] == "." || parts[0] == ".." {
+			return false
+		}
+		if len(parts) == 1 {
+			return method == http.MethodGet || method == http.MethodDelete
+		}
+		return len(parts) == 2 && parts[1] == "content" && method == http.MethodGet
+	}
 	if method != http.MethodGet && method != http.MethodPost {
 		return false
 	}

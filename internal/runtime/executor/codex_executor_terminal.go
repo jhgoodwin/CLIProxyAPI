@@ -14,6 +14,14 @@ import (
 	"github.com/tidwall/sjson"
 )
 
+func safeCodexFileStatus(code int, body []byte) statusErr {
+	message := helps.SafeFileRejection(body)
+	if message == "" {
+		message = "Codex upstream rejected request"
+	}
+	return statusErr{code: code, msg: message}
+}
+
 const codexIncompleteStreamMessage = "stream error: stream disconnected before completion: stream closed before response.completed"
 
 type codexIncompleteStreamError struct {

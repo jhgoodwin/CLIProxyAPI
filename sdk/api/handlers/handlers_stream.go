@@ -282,6 +282,14 @@ func (h *BaseAPIHandler) executeStreamWithAuthManager(ctx context.Context, handl
 }
 
 func (h *BaseAPIHandler) executeStreamWithAuthManagerFormats(ctx context.Context, entryProtocol, exitProtocol, modelName string, rawJSON []byte, alt string, allowImageModel bool, execOptions modelExecutionOptions) (<-chan []byte, http.Header, <-chan *interfaces.ErrorMessage) {
+	var fileErr *interfaces.ErrorMessage
+	ctx, rawJSON, fileErr = h.prepareFileReferences(ctx, entryProtocol, rawJSON)
+	if fileErr != nil {
+		errors := make(chan *interfaces.ErrorMessage, 1)
+		errors <- fileErr
+		close(errors)
+		return nil, nil, errors
+	}
 	originalRequestedModel := modelName
 	// Speech-only models are reachable solely through the speech entry protocol.
 	execOptions.AllowSpeechModel = isModelExecutionSpeechProtocol(entryProtocol)
@@ -296,6 +304,12 @@ func (h *BaseAPIHandler) executeStreamWithAuthManagerFormats(ctx context.Context
 		close(errChan)
 		return nil, nil, errChan
 	}
+	if errFileRoute := validateFileRoute(ctx, routeDecision.ExecutorPluginID, nil); errFileRoute != nil {
+		errors := make(chan *interfaces.ErrorMessage, 1)
+		errors <- errFileRoute
+		close(errors)
+		return nil, nil, errors
+	}
 	if routeDecision.ExecutorPluginID != "" {
 		return h.streamWithPluginExecutor(ctx, entryProtocol, responseProtocol, modelName, originalRequestedModel, rawJSON, alt, routeDecision.ExecutorPluginID, execOptions)
 	}
@@ -307,6 +321,18 @@ func (h *BaseAPIHandler) executeStreamWithAuthManagerFormats(ctx context.Context
 		return nil, nil, errChan
 	}
 	providers = adjustExecutionProvidersForEntryProtocol(entryProtocol, providers)
+	if errFileModel := validateFileModel(ctx, normalizedModel); errFileModel != nil {
+		errors := make(chan *interfaces.ErrorMessage, 1)
+		errors <- errFileModel
+		close(errors)
+		return nil, nil, errors
+	}
+	if errFileRoute := validateFileRoute(ctx, "", providers); errFileRoute != nil {
+		errors := make(chan *interfaces.ErrorMessage, 1)
+		errors <- errFileRoute
+		close(errors)
+		return nil, nil, errors
+	}
 	reqMeta := requestExecutionMetadata(ctx)
 	if execOptions.Path != "" {
 		reqMeta[coreexecutor.RequestPathMetadataKey] = execOptions.Path
@@ -352,10 +378,16 @@ func (h *BaseAPIHandler) executeStreamWithAuthManagerFormats(ctx context.Context
 		return nil, nil, errChan
 	}
 	ctx = enrichContextWithSessionHierarchy(ctx, opts.Headers, req.Payload, opts.Metadata)
+	if f := helps.FileRequestFromContext(ctx); f != nil && f.Owner != "" {
+		if opts.Metadata == nil {
+			opts.Metadata = map[string]any{}
+		}
+		opts.Metadata[coreexecutor.PinnedAuthMetadataKey] = f.Owner
+	}
 	streamResult, err := h.AuthManager.ExecuteStream(ctx, providers, req, opts)
 	if err != nil {
 		err = enrichAuthSelectionError(err, providers, normalizedModel)
-		errMsg := executionErrorMessage(err)
+		errMsg := privateFileExecutionError(ctx, executionErrorMessage(err))
 		lifecycle.completeError(ctx, errMsg)
 		errChan := make(chan *interfaces.ErrorMessage, 1)
 		errChan <- errMsg
@@ -554,6 +586,12 @@ func (h *BaseAPIHandler) executeStreamWithAuthManagerFormats(ctx context.Context
 			break
 		}
 		bootstrapRetries++
+		if f := helps.FileRequestFromContext(ctx); f != nil && f.Owner != "" {
+			if opts.Metadata == nil {
+				opts.Metadata = map[string]any{}
+			}
+			opts.Metadata[coreexecutor.PinnedAuthMetadataKey] = f.Owner
+		}
 		retryResult, retryErr := h.AuthManager.ExecuteStream(ctx, providers, req, opts)
 		if retryErr != nil {
 			originalBootstrapErr := executionErrorMessage(bootstrapStreamErr)
@@ -614,6 +652,7 @@ func (h *BaseAPIHandler) executeStreamWithAuthManagerFormats(ctx context.Context
 		}
 
 		sendErr := func(msg *interfaces.ErrorMessage) bool {
+			msg = privateFileExecutionError(ctx, msg)
 			if ctx == nil {
 				errChan <- msg
 				return true

@@ -8,6 +8,7 @@ config.yaml
 .env
 
 # Generated content
+/.screenshot-deploy-*/
 bin/*
 /logs
 conv/*
@@ -36,6 +37,7 @@ auths/*
 docs/*
 !docs/management-api-v8.md
 !docs/tenant-policy.md
+!docs/codex-files-prototype.md
 AGENTS.md
 CLAUDE.md
 GEMINI.md

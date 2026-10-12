@@ -178,6 +178,40 @@ func TestIdentityRealtimeRequiresTenantBearerAndCodexAccess(t *testing.T) {
 	}
 }
 
+func TestIdentityFilesRequireActiveTenantBearer(t *testing.T) {
+	path, _ := identityFixture(t)
+	valid := http.Header{"Authorization": {"Bearer test-secret"}}
+	routes := []string{"/v1/files", "/v1/files/file-123", "/v1/files/file-123/content"}
+	for _, route := range routes {
+		if !identityAuthenticate(t, valid, route).Authenticated {
+			t.Fatalf("tenant frontend authentication separately blocked %s", route)
+		}
+		for _, headers := range []http.Header{{}, {"Authorization": {"Bearer wrong"}}, {"Authorization": {"Bearer test-secret", "Bearer test-secret"}}, {"X-Api-Key": {"test-secret"}}} {
+			if identityAuthenticate(t, headers, route).Authenticated {
+				t.Fatalf("invalid credentials accepted for %s", route)
+			}
+		}
+	}
+	for _, state := range []string{"disabled", "revoked"} {
+		if err := withLedger(path, true, func(l *Ledger) error {
+			u := l.Users["u"]
+			u.Disabled = state == "disabled"
+			l.Users["u"] = u
+			k := l.Keys[KeyHash("test-secret")]
+			k.Revoked = state == "revoked"
+			l.Keys[KeyHash("test-secret")] = k
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		for _, route := range routes {
+			if identityAuthenticate(t, valid, route).Authenticated {
+				t.Fatalf("%s tenant authenticated for %s", state, route)
+			}
+		}
+	}
+}
+
 func TestIdentityMediaNeverEstimatesTextOnlyCost(t *testing.T) {
 	path, r := identityFixture(t)
 	configState.Lock()

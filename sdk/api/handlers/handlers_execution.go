@@ -45,6 +45,11 @@ func (h *BaseAPIHandler) executeWithAuthManager(ctx context.Context, handlerType
 }
 
 func (h *BaseAPIHandler) executeWithAuthManagerFormats(ctx context.Context, entryProtocol, exitProtocol, modelName string, rawJSON []byte, alt string, allowImageModel bool, execOptions modelExecutionOptions) ([]byte, http.Header, *interfaces.ErrorMessage) {
+	var fileErr *interfaces.ErrorMessage
+	ctx, rawJSON, fileErr = h.prepareFileReferences(ctx, entryProtocol, rawJSON)
+	if fileErr != nil {
+		return nil, nil, fileErr
+	}
 	originalRequestedModel := modelName
 	// Speech-only models are reachable solely through the speech entry protocol.
 	execOptions.AllowSpeechModel = isModelExecutionSpeechProtocol(entryProtocol)
@@ -52,6 +57,9 @@ func (h *BaseAPIHandler) executeWithAuthManagerFormats(ctx context.Context, entr
 	responseProtocol := modelExecutionResponseProtocol(entryProtocol, exitProtocol)
 	if errMsg := validateNativeInteractionsExecution(entryProtocol, execOptions, routeDecision); errMsg != nil {
 		return nil, nil, errMsg
+	}
+	if errFileRoute := validateFileRoute(ctx, routeDecision.ExecutorPluginID, nil); errFileRoute != nil {
+		return nil, nil, errFileRoute
 	}
 	if routeDecision.ExecutorPluginID != "" {
 		return h.executeWithPluginExecutor(ctx, entryProtocol, responseProtocol, modelName, originalRequestedModel, rawJSON, alt, routeDecision.ExecutorPluginID, execOptions)
@@ -61,6 +69,12 @@ func (h *BaseAPIHandler) executeWithAuthManagerFormats(ctx context.Context, entr
 		return nil, nil, errMsg
 	}
 	providers = adjustExecutionProvidersForEntryProtocol(entryProtocol, providers)
+	if errFileModel := validateFileModel(ctx, normalizedModel); errFileModel != nil {
+		return nil, nil, errFileModel
+	}
+	if errFileRoute := validateFileRoute(ctx, "", providers); errFileRoute != nil {
+		return nil, nil, errFileRoute
+	}
 	reqMeta := requestExecutionMetadata(ctx)
 	if execOptions.Path != "" {
 		reqMeta[coreexecutor.RequestPathMetadataKey] = execOptions.Path
@@ -103,10 +117,16 @@ func (h *BaseAPIHandler) executeWithAuthManagerFormats(ctx context.Context, entr
 		return nil, nil, interceptErr
 	}
 	ctx = enrichContextWithSessionHierarchy(ctx, opts.Headers, req.Payload, opts.Metadata)
+	if f := helps.FileRequestFromContext(ctx); f != nil && f.Owner != "" {
+		if opts.Metadata == nil {
+			opts.Metadata = map[string]any{}
+		}
+		opts.Metadata[coreexecutor.PinnedAuthMetadataKey] = f.Owner
+	}
 	resp, err := h.AuthManager.Execute(ctx, providers, req, opts)
 	if err != nil {
 		err = enrichAuthSelectionError(err, providers, normalizedModel)
-		errMsg := executionErrorMessage(err)
+		errMsg := privateFileExecutionError(ctx, executionErrorMessage(err))
 		lifecycle.completeError(ctx, errMsg)
 		return nil, nil, errMsg
 	}
@@ -177,7 +197,7 @@ func (h *BaseAPIHandler) executeCountWithAuthManager(ctx context.Context, handle
 	resp, err := h.AuthManager.ExecuteCount(ctx, providers, req, opts)
 	if err != nil {
 		err = enrichAuthSelectionError(err, providers, normalizedModel)
-		errMsg := executionErrorMessage(err)
+		errMsg := privateFileExecutionError(ctx, executionErrorMessage(err))
 		lifecycle.completeError(ctx, errMsg)
 		return nil, nil, errMsg
 	}

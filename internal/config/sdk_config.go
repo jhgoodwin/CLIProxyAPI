@@ -6,6 +6,9 @@ package config
 
 // SDKConfig represents the application's configuration, loaded from a YAML file.
 type SDKConfig struct {
+	// CodexFilesPrototype enables HTTP-only, in-memory PNG references. Disabled by default.
+	CodexFilesPrototype CodexFilesPrototypeConfig `yaml:"codex-files-prototype" json:"codex-files-prototype"`
+
 	// Client configures client-facing compatibility behavior.
 	Client ClientConfig `yaml:"client" json:"client"`
 
