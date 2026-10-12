@@ -12,6 +12,10 @@ type SDKConfig struct {
 	// CodexFilesPrototype retains legacy upload limits for the shared Files store. Disabled by default.
 	CodexFilesPrototype CodexFilesPrototypeConfig `yaml:"codex-files-prototype" json:"codex-files-prototype"`
 
+	// MaxRequestBodyBytes limits the size (in bytes) of incoming HTTP request bodies.
+	// Values <= 0 disable the limit (default).
+	MaxRequestBodyBytes int64 `yaml:"max-request-body-bytes" json:"max-request-body-bytes"`
+
 	// Client configures client-facing compatibility behavior.
 	Client ClientConfig `yaml:"client" json:"client"`
 
