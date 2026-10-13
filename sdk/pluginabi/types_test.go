@@ -117,6 +117,15 @@ func TestMethodNamesAreStable(t *testing.T) {
 	}
 }
 
+func TestNativeMethodNamesAreStable(t *testing.T) {
+	if MethodNativeRegister != "native.register" {
+		t.Fatalf("MethodNativeRegister = %q", MethodNativeRegister)
+	}
+	if MethodNativeHandle != "native.handle" {
+		t.Fatalf("MethodNativeHandle = %q", MethodNativeHandle)
+	}
+}
+
 func TestSchedulerPickMethodName(t *testing.T) {
 	if MethodSchedulerPick != "scheduler.pick" {
 		t.Fatalf("MethodSchedulerPick = %q", MethodSchedulerPick)

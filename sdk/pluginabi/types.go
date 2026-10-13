@@ -3,22 +3,18 @@ package pluginabi
 import "encoding/json"
 
 const (
-	// ABIVersion tracks the native C ABI shape (native plugin exports).
 	ABIVersion uint32 = 1
-	// SchemaVersion tracks the RPC JSON contract exchanged at plugin.register.
+	// SchemaVersion tracks the highest RPC JSON contract exchanged at plugin.register.
 	// Version 2 adds request lifecycle completion and active request termination.
-	// Version 3 omits OriginalRequest/RequestBody on payload stream chunks
-	// (ChunkIndex >= 0); those fields remain on StreamChunkHeaderInitIndex only.
-	// Plugins that still need per-chunk request bodies should keep schema_version < 3.
+	// Version 3 omits OriginalRequest/RequestBody on payload stream chunks (ChunkIndex >= 0).
 	// Version 4 adds upstream WebSocket response event observation.
-	// Version 5 omits HistoryChunks on payload stream chunks (ChunkIndex >= 0);
-	// those fields remain on StreamChunkHeaderInitIndex only. Plugins that still need
-	// per-chunk history chunks should keep schema_version < 5.
+	// Version 5 omits HistoryChunks on payload stream chunks (ChunkIndex >= 0).
 	// Version 6 preserves raw JSON bodies for plugin management responses.
 	// Plugins that still require HTML entity escaping on JSON response strings
 	// should keep schema_version < 6.
 	// Version 7 adds required request policies, trusted principal/provider/pool snapshots,
 	// attempt correlation, and canonical token accounting.
+	// It also adds generic authenticated NativeAPI routes and bounded host HTTP options.
 	SchemaVersion uint32 = 7
 	// SchemaVersionRequiredPolicy introduces trusted policy identity, quota inventory, and usage correlation.
 	SchemaVersionRequiredPolicy uint32 = 7
@@ -36,11 +32,17 @@ const (
 	SchemaVersionRawManagementResponse uint32 = 6
 )
 
+// SchemaVersionNativeAPI is the first schema version supporting NativeAPI routes.
+const SchemaVersionNativeAPI uint32 = 7
+
 const (
 	MethodPluginRegister    = "plugin.register"
 	MethodPluginQuiesce     = "plugin.quiesce"
 	MethodPluginReconfigure = "plugin.reconfigure"
 	MethodPluginShutdown    = "plugin.shutdown"
+
+	MethodNativeRegister = "native.register"
+	MethodNativeHandle   = "native.handle"
 
 	MethodModelRegister = "model.register"
 	MethodModelStatic   = "model.static"
