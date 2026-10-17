@@ -9,7 +9,6 @@ import (
 
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/executor/helps"
-	"github.com/router-for-me/CLIProxyAPI/v8/internal/thinking"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
 	sdktranslator "github.com/router-for-me/CLIProxyAPI/v8/sdk/translator"
@@ -29,7 +28,7 @@ func (e *CodexExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, re
 	if errOwner := helps.ValidateFileOwner(ctx, auth.ID, auth.Provider); errOwner != nil {
 		return cliproxyexecutor.Response{}, errOwner
 	}
-	baseModel := thinking.ParseSuffix(req.Model).ModelName
+	baseModel := helps.CodexBaseModel(req.Model)
 
 	apiKey, baseURL := codexCreds(auth)
 	if baseURL == "" {
@@ -60,6 +59,7 @@ func (e *CodexExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, re
 
 	ctx = helps.WithPayloadFinalizer(ctx, helps.NewPayloadFinalizer(e.cfg, e.Identifier(), baseModel, to.String(), "", originalTranslated, req, opts))
 	body = helps.SetStringIfDifferent(body, "model", baseModel)
+	body = helps.ApplyCodexFastModelTier(body, req.Model)
 	body = helps.SetBoolIfDifferent(body, "stream", true)
 	body, _ = sjson.DeleteBytes(body, "previous_response_id")
 	body, _ = sjson.DeleteBytes(body, "generate")
@@ -227,7 +227,7 @@ func (e *CodexExecutor) executeCompact(ctx context.Context, auth *cliproxyauth.A
 	if errOwner := helps.ValidateFileOwner(ctx, auth.ID, auth.Provider); errOwner != nil {
 		return cliproxyexecutor.Response{}, errOwner
 	}
-	baseModel := thinking.ParseSuffix(req.Model).ModelName
+	baseModel := helps.CodexBaseModel(req.Model)
 
 	apiKey, baseURL := codexCreds(auth)
 	if baseURL == "" {
@@ -258,6 +258,7 @@ func (e *CodexExecutor) executeCompact(ctx context.Context, auth *cliproxyauth.A
 
 	ctx = helps.WithPayloadFinalizer(ctx, helps.NewPayloadFinalizer(e.cfg, e.Identifier(), baseModel, to.String(), "", originalTranslated, req, opts))
 	body = helps.SetStringIfDifferent(body, "model", baseModel)
+	body = helps.ApplyCodexFastModelTier(body, req.Model)
 	body, _ = sjson.DeleteBytes(body, "stream")
 	body = normalizeCodexInstructions(body, helps.IsNativeCodexRequest(req.Payload, opts))
 	body = sanitizeOpenAIResponsesReasoningEncryptedContentWithCompat(ctx, "codex executor", body, isCompat)

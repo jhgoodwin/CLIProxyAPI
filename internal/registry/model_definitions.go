@@ -244,10 +244,20 @@ func GetXAIModels() []*ModelInfo {
 	return WithXAIBuiltins(cloneModelInfos(getModels().XAI))
 }
 
-// WithCodexBuiltins injects hard-coded Codex-only model definitions that should
-// not depend on remote models.json updates. Built-ins replace any matching IDs
-// already present in the provided slice.
+// WithCodexBuiltins injects Codex-only model definitions that survive remote
+// models.json updates. The fast Sol variant is derived only for plans containing
+// its base model. Built-ins replace matching IDs already present in the slice.
 func WithCodexBuiltins(models []*ModelInfo) []*ModelInfo {
+	for _, model := range models {
+		if model != nil && model.ID == "gpt-6.1-sol" {
+			fast := cloneModelInfo(model)
+			fast.ID = "gpt-6.1-sol-fast"
+			fast.MetadataModelID = model.ID
+			fast.DisplayName = model.DisplayName + " Fast"
+			models = upsertModelInfos(models, fast)
+			break
+		}
+	}
 	return upsertModelInfos(models,
 		codexBuiltinImage15ModelInfo(),
 		codexBuiltinImageModelInfo(),
@@ -571,7 +581,7 @@ func LookupStaticModelInfo(modelID string) *ModelInfo {
 		data.Gemini,
 		data.Vertex,
 		data.AIStudio,
-		data.CodexPro,
+		WithCodexBuiltins(data.CodexPro),
 		data.Kimi,
 		data.Antigravity,
 		data.XAI,
