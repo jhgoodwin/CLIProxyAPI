@@ -16,6 +16,9 @@ import (
 )
 
 func (h *BaseAPIHandler) prepareFileReferences(ctx context.Context, protocol string, body []byte) (context.Context, []byte, *interfaces.ErrorMessage) {
+	if next, data, err, handled := h.prepareSharedFileReferences(ctx, protocol, body); handled {
+		return next, data, err
+	}
 	fail := func(status int, msg string) (context.Context, []byte, *interfaces.ErrorMessage) {
 		return ctx, nil, &interfaces.ErrorMessage{StatusCode: status, Error: fmt.Errorf("%s", msg)}
 	}
@@ -34,6 +37,7 @@ func (h *BaseAPIHandler) prepareFileReferences(ctx context.Context, protocol str
 		}
 		return ctx, body, nil
 	}
+	ctx = helps.WithFilePrivacy(ctx)
 	if h.Cfg == nil || !h.Cfg.CodexFilesPrototype.Enabled {
 		return fail(400, "files prototype is disabled")
 	}
@@ -62,16 +66,12 @@ func (h *BaseAPIHandler) prepareFileReferences(ctx context.Context, protocol str
 	return ctx, body, nil
 }
 
-func privateFileExecutionError(ctx context.Context, e *interfaces.ErrorMessage) *interfaces.ErrorMessage {
-	if f := helps.FileRequestFromContext(ctx); f != nil && f.Local && e != nil {
-		return &interfaces.ErrorMessage{StatusCode: e.StatusCode, Error: fmt.Errorf("screenshot inference upstream request failed")}
-	}
-	return e
-}
-
 const visionFallbackMessage = "vision-description fallback is not implemented"
 
 func validateFileRoute(ctx context.Context, plugin string, providers []string) *interfaces.ErrorMessage {
+	if sharedFilesContext(ctx) {
+		return nil
+	}
 	f := helps.FileRequestFromContext(ctx)
 	if f == nil {
 		return nil
@@ -82,7 +82,7 @@ func validateFileRoute(ctx context.Context, plugin string, providers []string) *
 		}
 		for _, p := range providers {
 			switch p {
-			case "codex", "openai", "openai-compatibility", "claude", "gemini", "gemini-cli":
+			case "codex", "openai", "openai-compatibility", "claude", "gemini":
 			default:
 				// Named compatibility executors use this reserved runtime family,
 				// not the arbitrary display name from configuration.
@@ -100,6 +100,9 @@ func validateFileRoute(ctx context.Context, plugin string, providers []string) *
 	return nil
 }
 func validateFileModel(ctx context.Context, model string) *interfaces.ErrorMessage {
+	if sharedFilesContext(ctx) {
+		return nil
+	}
 	f := helps.FileRequestFromContext(ctx)
 	if f == nil || !f.Local {
 		return nil

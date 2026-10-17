@@ -3,7 +3,6 @@ package helps
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -16,7 +15,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/tidwall/gjson"
-	"github.com/tidwall/sjson"
 )
 
 const PrototypeFilePrefix = "file-cpa-"
@@ -194,17 +192,7 @@ func (r *CodexFileRegistry) Delete(id, principal string, ttl time.Duration) erro
 // ImageSlots covers the two supported Responses attachment positions, including
 // structured screenshot tool outputs. Paths are reused for discovery and rewriting.
 func ImageSlots(body []byte) []string {
-	var out []string
-	for i, item := range gjson.GetBytes(body, "input").Array() {
-		for _, field := range []string{"content", "output"} {
-			for j, part := range item.Get(field).Array() {
-				if part.Get("type").String() == "input_image" {
-					out = append(out, fmt.Sprintf("input.%d.%s.%d", i, field, j))
-				}
-			}
-		}
-	}
-	return out
+	return discoverHostedImageSlots(body)
 }
 func ImageFileIDs(body []byte) ([]string, error) {
 	if !json.Valid(body) {
@@ -233,6 +221,9 @@ type FileRequest struct {
 	Owner   string
 	Allowed map[string]bool
 	Local   bool
+	Pending map[string]PendingFile
+	// NativeProvider is assigned only by the selected native upload adapter.
+	NativeProvider string
 }
 
 func FileRequestFromContext(ctx context.Context) *FileRequest {
@@ -243,113 +234,10 @@ func WithFileRequest(ctx context.Context, f *FileRequest) context.Context {
 	return context.WithValue(ctx, fileRequestKey{}, f)
 }
 func (r *CodexFileRegistry) Resolve(ctx context.Context, body []byte, principal string, ttl time.Duration) (context.Context, []byte, error) {
-	ids, err := ImageFileIDs(body)
-	if err != nil {
-		return ctx, nil, err
-	}
-	if len(ids) == 0 {
-		return ctx, body, nil
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.prune(ttl)
-	fReq := &FileRequest{Allowed: map[string]bool{}}
-	replacements := map[string]string{}
-	inline := map[string]bool{}
-	for _, id := range ids {
-		if !strings.HasPrefix(id, PrototypeFilePrefix) {
-			continue
-		}
-		f, ok := r.files[id]
-		if principal == "" || !ok || f.Scope != FileCallerScope(principal) {
-			return ctx, nil, fmt.Errorf("unknown or unauthorized file reference")
-		}
-		if !f.Ready {
-			return ctx, nil, fmt.Errorf("file is not ready")
-		}
-		if f.VariantPath != "" {
-			data, e := os.ReadFile(f.VariantPath)
-			if e != nil {
-				return ctx, nil, fmt.Errorf("file content unavailable")
-			}
-			replacements[id] = "data:image/png;base64," + base64.StdEncoding.EncodeToString(data)
-			inline[id] = true
-			fReq.Local = true
-		} else {
-			if fReq.Owner != "" && fReq.Owner != f.Owner {
-				return ctx, nil, fmt.Errorf("all file references must have one owner")
-			}
-			fReq.Owner = f.Owner
-			fReq.Allowed[f.UpstreamID] = true
-			replacements[id] = f.UpstreamID
-		}
-	}
-	if len(replacements) == 0 {
-		return ctx, body, nil
-	}
-	for _, p := range ImageSlots(body) {
-		id := gjson.GetBytes(body, p+".file_id").String()
-		if value, ok := replacements[id]; ok {
-			if inline[id] {
-				body, err = sjson.DeleteBytes(body, p+".file_id")
-				if err == nil {
-					body, err = sjson.SetBytes(body, p+".image_url", value)
-				}
-			} else {
-				body, err = sjson.SetBytes(body, p+".file_id", value)
-			}
-			if err != nil {
-				return ctx, nil, err
-			}
-		}
-	}
-	return WithFileRequest(ctx, fReq), body, nil
+	return r.resolveHostedFileReferences(ctx, body, principal, ttl)
 }
 
 // ValidateFilePayload never restores image fields removed by final user rules.
-func ContainsLocalFileID(body []byte) bool {
-	var value any
-	if json.Unmarshal(body, &value) != nil {
-		return false
-	}
-	var walk func(any) bool
-	walk = func(v any) bool {
-		switch t := v.(type) {
-		case map[string]any:
-			for k, child := range t {
-				if k == "file_id" {
-					if s, ok := child.(string); ok && strings.HasPrefix(s, PrototypeFilePrefix) {
-						return true
-					}
-				}
-				if walk(child) {
-					return true
-				}
-			}
-		case []any:
-			for _, child := range t {
-				if walk(child) {
-					return true
-				}
-			}
-		}
-		return false
-	}
-	return walk(value)
-}
 func ValidateFilePayload(ctx context.Context, body []byte) error {
-	if ContainsLocalFileID(body) {
-		return fmt.Errorf("final payload contains unresolved proxy file reference")
-	}
-	ids, err := ImageFileIDs(body)
-	if err != nil {
-		return err
-	}
-	f := FileRequestFromContext(ctx)
-	for _, id := range ids {
-		if strings.HasPrefix(id, PrototypeFilePrefix) || (f != nil && !f.Local && !f.Allowed[id]) {
-			return fmt.Errorf("final payload contains unresolved or changed file reference")
-		}
-	}
-	return nil
+	return validateHostedFilePayload(ctx, body)
 }

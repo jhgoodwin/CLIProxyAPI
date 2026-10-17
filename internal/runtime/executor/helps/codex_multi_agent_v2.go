@@ -4,12 +4,15 @@ import (
 	"context"
 	"net/http"
 
+	"github.com/tidwall/gjson"
+
 	multiagentv2 "github.com/router-for-me/CLIProxyAPI/v8/internal/client/codex/optimize-multi-agent-v2"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/thinking"
 	openaichatclaude "github.com/router-for-me/CLIProxyAPI/v8/internal/translator/claude/openai/chat-completions"
 	responsesclaude "github.com/router-for-me/CLIProxyAPI/v8/internal/translator/claude/openai/responses"
 	codexclaude "github.com/router-for-me/CLIProxyAPI/v8/internal/translator/codex/claude"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/translator/filesoverride"
 	geminiclaude "github.com/router-for-me/CLIProxyAPI/v8/internal/translator/gemini/claude"
 	interactionsclaude "github.com/router-for-me/CLIProxyAPI/v8/internal/translator/interactions/claude"
 	openaiclaude "github.com/router-for-me/CLIProxyAPI/v8/internal/translator/openai/claude"
@@ -188,25 +191,28 @@ func translateRequestWithAPIKeyModelCompatibilityForExecutor(ctx context.Context
 		}
 	}
 
-	var translated []byte
-	var convertErr error
+	var convert func(string, []byte, bool) ([]byte, error)
 	switch {
 	case from == sdktranslator.FormatClaude && to == sdktranslator.FormatCodex:
-		translated, convertErr = codexclaude.ConvertClaudeRequestToCodexWithCompat(model, payload, stream)
+		convert = codexclaude.ConvertClaudeRequestToCodexWithCompat
 	case from == sdktranslator.FormatClaude && to == sdktranslator.FormatGemini:
-		translated, convertErr = geminiclaude.ConvertClaudeRequestToGeminiWithCompat(model, payload, stream)
+		convert = geminiclaude.ConvertClaudeRequestToGeminiWithCompat
 	case from == sdktranslator.FormatClaude && to == sdktranslator.FormatInteractions:
-		translated, convertErr = interactionsclaude.ConvertClaudeRequestToInteractionsWithCompat(model, payload, stream)
+		convert = interactionsclaude.ConvertClaudeRequestToInteractionsWithCompat
 	case from == sdktranslator.FormatClaude && to == sdktranslator.FormatOpenAI:
-		translated, convertErr = openaiclaude.ConvertClaudeRequestToOpenAIWithCompat(model, payload, stream)
+		convert = openaiclaude.ConvertClaudeRequestToOpenAIWithCompat
 	case from == sdktranslator.FormatOpenAI && to == sdktranslator.FormatClaude:
-		translated, convertErr = openaichatclaude.ConvertOpenAIRequestToClaudeWithCompat(model, payload, stream)
+		convert = openaichatclaude.ConvertOpenAIRequestToClaudeWithCompat
 	case from == sdktranslator.FormatOpenAIResponse && to == sdktranslator.FormatClaude:
-		translated, convertErr = responsesclaude.ConvertOpenAIResponsesRequestToClaudeWithCompat(model, payload, stream)
+		convert = responsesclaude.ConvertOpenAIResponsesRequestToClaudeWithCompat
 	default:
 		return translateRequestWithCodexMultiAgentV2Checked(ctx, headers, cfg, from, to, model, payload, stream)
 	}
 
+	translated, convertErr := filesoverride.ConvertWithCompat(from.String(), to.String(), model, payload, stream, convert)
+	if convertErr != nil && gjson.GetBytes(payload, filesoverride.Marker).Exists() {
+		return nil, convertErr
+	}
 	summaryConfig := thinking.ExtractTranslatedSummaryConfig(payload, from.String(), to.String())
 	translated = thinking.ApplySummaryConfigForModel(translated, to.String(), model, summaryConfig)
 	return sdktranslator.NormalizeRequest(ctx, from, to, model, translated, stream), convertErr

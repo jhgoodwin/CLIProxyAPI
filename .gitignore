@@ -28,6 +28,16 @@ objectstore/*
 # Static assets
 static/*
 
+# Private durable image cache (never commit user uploads)
+/anthropic-files/
+/files/
+
+# Local deployment recovery and live acceptance artifacts
+/.anthropic-*
+/.dsh-native-smoke.mjs
+/.dsh-upgrade-*
+/.dsh-upgrade.Dockerfile
+
 # Authentication data
 auths/*
 /auths
@@ -38,6 +48,8 @@ docs/*
 !docs/management-api-v8.md
 !docs/tenant-policy.md
 !docs/codex-files-prototype.md
+!docs/files.md
+!docs/claude-files.md
 AGENTS.md
 CLAUDE.md
 GEMINI.md

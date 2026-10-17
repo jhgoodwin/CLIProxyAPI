@@ -655,6 +655,11 @@ func failFromErrors(errs ...error) usage.Failure {
 				body = string(responseBody)
 			}
 		}
+		// Usage failures are persisted diagnostics, not caller-visible responses.
+		var diagnostic interface{ LogDiagnostic() string }
+		if errors.As(err, &diagnostic) {
+			body = diagnostic.LogDiagnostic()
+		}
 		return usage.Failure{
 			Body:       body,
 			StatusCode: clienterror.HTTPStatusFromError(err),

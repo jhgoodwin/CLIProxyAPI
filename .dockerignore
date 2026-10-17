@@ -19,6 +19,8 @@ LICENSE
 auths
 logs
 conv
+anthropic-files
+files
 config.yaml
 
 # Development/editor

@@ -3,7 +3,6 @@ package executor
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"image"
 	"image/png"
@@ -18,6 +17,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/executor/helps"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/access"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/api/handlers"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/api/handlers/openai"
@@ -32,39 +32,39 @@ func TestValidatorScreenshotToolOutputActualTransport(t *testing.T) {
 			if errPNG := png.Encode(&pngBytes, image.NewRGBA(image.Rect(0, 0, 803, 444))); errPNG != nil {
 				t.Fatal(errPNG)
 			}
+			normalized, _, err := helps.NormalizeScreenshot(pngBytes.Bytes())
+			if err != nil {
+				t.Fatal(err)
+			}
 			calls := 0
 			finalBytes := 0
 			uploadedBearer := ""
-			blob := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			blob := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				body, _ := io.ReadAll(r.Body)
-				if !bytes.Equal(body, pngBytes.Bytes()) {
+				if !bytes.Equal(body, normalized) {
 					t.Error("image altered")
 				}
 				if r.Header.Get("Authorization") != "" {
 					t.Error("blob bearer")
 				}
 				w.WriteHeader(201)
-			}))
-			defer blob.Close()
-			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			})
+			upstream := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
-				case "/files":
+				case "/backend-api/files":
 					uploadedBearer = r.Header.Get("Authorization")
-					_ = json.NewEncoder(w).Encode(map[string]string{"file_id": "upstream-file", "upload_url": blob.URL})
-				case "/files/upstream-file/uploaded":
+					_ = json.NewEncoder(w).Encode(map[string]string{"file_id": "upstream-file", "upload_url": "https://fixture.blob.core.windows.net/image?sig=synthetic"})
+				case "/backend-api/files/upstream-file/uploaded":
 					_, _ = w.Write([]byte(`{"status":"success","download_url":"https://example.invalid/file"}`))
-				case "/codex/responses":
+				case "/backend-api/codex/responses":
 					calls++
 					body, _ := io.ReadAll(r.Body)
 					finalBytes = len(body)
-					if uploadedBearer != "" {
-						t.Error("upload unexpectedly used upstream account")
+					if uploadedBearer == "" || uploadedBearer != r.Header.Get("Authorization") || r.Header.Get("ChatGPT-Account-ID") != "synthetic" {
+						t.Error("upload and inference did not use same selected account")
 					}
-					url := gjson.GetBytes(body, "input.1.output.0.image_url").String()
-					decoded, e := base64.StdEncoding.DecodeString(strings.TrimPrefix(url, "data:image/png;base64,"))
-					cfgImage, eCfg := png.DecodeConfig(bytes.NewReader(decoded))
-					if e != nil || eCfg != nil || cfgImage.Width != 803 || cfgImage.Height != 444 || strings.Contains(string(body), "file-cpa-") || gjson.GetBytes(body, "input.1.output.0.file_id").Exists() {
-						t.Error("missing actual normalized image bytes")
+					if gjson.GetBytes(body, "input.1.output.0.file_id").String() != "upstream-file" || strings.Contains(string(body), "file-cpa-") || strings.Contains(string(body), "image_url") || strings.Contains(string(body), "base64") || bytes.Contains(body, normalized) {
+						t.Error("tool output inference did not contain upstream reference only")
 					}
 					w.Header().Set("Content-Type", "text/event-stream")
 					_, _ = io.WriteString(w, "data: {\"type\":\"response.created\",\"response\":{\"id\":\"r\"}}\n\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"r\",\"object\":\"response\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"OK\"}]}],\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n\n")
@@ -72,18 +72,18 @@ func TestValidatorScreenshotToolOutputActualTransport(t *testing.T) {
 					t.Errorf("unexpected path %s", r.URL.Path)
 					w.WriteHeader(404)
 				}
-			}))
-			defer upstream.Close()
+			})
 			cfg := &config.Config{}
 			cfg.CodexFilesPrototype.Enabled = true
 			manager := auth.NewManager(nil, nil, nil)
+			manager.SetRoundTripperProvider(filesFixtureTransport{"https://chatgpt.com": upstream, "https://fixture.blob.core.windows.net": blob})
 			manager.RegisterExecutor(NewCodexAutoExecutor(cfg))
 			for _, id := range []string{"files-owner", "files-other"} {
 				token := "other-token"
 				if id == "files-owner" {
 					token = "owner-token"
 				}
-				_, err := manager.Register(context.Background(), &auth.Auth{ID: id, Provider: "codex", Status: auth.StatusActive, Attributes: map[string]string{"base_url": upstream.URL + "/codex"}, Metadata: map[string]any{"access_token": token, "account_id": "synthetic"}})
+				_, err := manager.Register(context.Background(), &auth.Auth{ID: id, Provider: "codex", Status: auth.StatusActive, Attributes: map[string]string{"base_url": "https://chatgpt.com/backend-api/codex"}, Metadata: map[string]any{"access_token": token, "account_id": "synthetic"}})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -98,6 +98,7 @@ func TestValidatorScreenshotToolOutputActualTransport(t *testing.T) {
 				c.Set("userApiKey", "caller")
 			})
 			r.POST("/v1/files", h.FilesUpload)
+			r.DELETE("/v1/files/:file_id", h.FilesDelete)
 			r.POST("/v1/responses", h.Responses)
 			var upload bytes.Buffer
 			mw := multipart.NewWriter(&upload)
@@ -112,7 +113,17 @@ func TestValidatorScreenshotToolOutputActualTransport(t *testing.T) {
 			if w.Code != 200 {
 				t.Fatalf("upload status=%d body=%s", w.Code, w.Body.String())
 			}
+			if uploadedBearer != "" {
+				t.Fatal("local Files create used upstream credentials")
+			}
 			id := gjson.Get(w.Body.String(), "id").String()
+			t.Cleanup(func() {
+				deleted := httptest.NewRecorder()
+				r.ServeHTTP(deleted, httptest.NewRequest(http.MethodDelete, "/v1/files/"+id, nil))
+				if deleted.Code != http.StatusOK {
+					t.Errorf("local file cleanup status=%d", deleted.Code)
+				}
+			})
 			// Local upload is account-neutral; inference may select either synthetic account.
 			payload := `{"model":"files-test-model","tools":[],"tool_choice":"none","input":[{"type":"function_call","call_id":"capture1","name":"capture","arguments":"{}"},{"type":"function_call_output","call_id":"capture1","output":[{"type":"input_image","file_id":"` + id + `"}]}],"stream":false}`
 			if stream {

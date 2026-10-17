@@ -68,6 +68,8 @@ type Result struct {
 	CredentialScope bool
 	// Error describes the failure when Success is false.
 	Error *Error
+	// errorDiagnostic is the private observability representation of Error.
+	errorDiagnostic errorDiagnostic
 	// Options carries execution request options (headers, metadata, etc.) for result tracking.
 	Options cliproxyexecutor.Options
 	// SkipQuotaObservation reports that this result must not replace the last

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -38,6 +39,8 @@ type RequestInfo struct {
 // It is designed to handle both standard and streaming responses, ensuring that logging operations do not block the client response.
 type ResponseWriterWrapper struct {
 	gin.ResponseWriter
+	captureMu           sync.Mutex                 // Serializes capture and privacy cleanup with non-streaming keepalive writes.
+	loggingSuppressed   bool                       // loggingSuppressed is set before local-file resolution writes a response.
 	body                *bytes.Buffer              // body is a buffer to store the response body for non-streaming responses.
 	isStreaming         bool                       // isStreaming indicates whether the response is a streaming type (e.g., text/event-stream).
 	streamWriter        logging.StreamingLogWriter // streamWriter is a writer for handling streaming log entries.
@@ -71,12 +74,55 @@ func NewResponseWriterWrapper(w gin.ResponseWriter, logger logging.RequestLogger
 	}
 }
 
+// SuppressRequestLogging disables capture before upstream response writes and releases
+// temporary sources after any in-flight keepalive capture finishes. It does not modify
+// the client response. Local references must be recognized before streaming log creation.
+func (w *ResponseWriterWrapper) SuppressRequestLogging(c *gin.Context) {
+	w.captureMu.Lock()
+	defer w.captureMu.Unlock()
+	w.suppressRequestLoggingLocked(c)
+}
+
+// suppressRequestLoggingLocked requires captureMu, including when called from Finalize.
+func (w *ResponseWriterWrapper) suppressRequestLoggingLocked(c *gin.Context) {
+	w.loggingSuppressed = true
+	w.body.Reset()
+	w.headers = nil
+	if w.requestInfo != nil {
+		w.requestInfo.Body = nil
+		w.requestInfo.Headers = nil
+		if w.requestInfo.deferredBodyCapture != nil {
+			w.requestInfo.deferredBodyCapture.Cleanup()
+			w.requestInfo.deferredBodyCapture = nil
+		}
+	}
+	for _, key := range []string{
+		logging.APIRequestSourceContextKey, logging.APIResponseSourceContextKey,
+		logging.WebsocketTimelineSourceContextKey, logging.APIWebsocketTimelineSourceContextKey,
+	} {
+		cleanupFileBodySources(extractFileBodySource(c, key))
+		c.Set(key, nil)
+	}
+	for _, key := range []string{
+		"API_REQUEST", "API_RESPONSE", "API_RESPONSE_ERROR", "API_WEBSOCKET_TIMELINE",
+		logging.DeferredAPIRequestContextKey, requestBodyOverrideContextKey,
+		responseBodyOverrideContextKey, websocketTimelineOverrideContextKey,
+	} {
+		c.Set(key, nil)
+	}
+}
+
 // Write wraps the underlying ResponseWriter's Write method to capture response data.
 // For non-streaming responses, it writes to an internal buffer. For streaming responses,
 // it sends data chunks to a non-blocking channel for asynchronous logging.
 // CRITICAL: This method prioritizes writing to the client to ensure zero latency,
 // handling logging operations subsequently.
 func (w *ResponseWriterWrapper) Write(data []byte) (int, error) {
+	w.captureMu.Lock()
+	defer w.captureMu.Unlock()
+	if w.loggingSuppressed {
+		return w.ResponseWriter.Write(data)
+	}
 	// Ensure headers are captured before first write
 	// This is critical because Write() may trigger WriteHeader() internally
 	w.ensureHeadersCaptured()
@@ -132,6 +178,11 @@ func (w *ResponseWriterWrapper) shouldBufferResponseBody() bool {
 // Some handlers (and fmt/io helpers) write via io.StringWriter; without this override, those writes
 // bypass Write() and would be missing from request logs.
 func (w *ResponseWriterWrapper) WriteString(data string) (int, error) {
+	w.captureMu.Lock()
+	defer w.captureMu.Unlock()
+	if w.loggingSuppressed {
+		return w.ResponseWriter.WriteString(data)
+	}
 	w.ensureHeadersCaptured()
 
 	// CRITICAL: Write to client first (zero latency)
@@ -160,6 +211,12 @@ func (w *ResponseWriterWrapper) WriteString(data string) (int, error) {
 // It captures the status code, detects if the response is streaming based on the Content-Type header,
 // and initializes the appropriate logging mechanism (standard or streaming).
 func (w *ResponseWriterWrapper) WriteHeader(statusCode int) {
+	w.captureMu.Lock()
+	defer w.captureMu.Unlock()
+	if w.loggingSuppressed {
+		w.ResponseWriter.WriteHeader(statusCode)
+		return
+	}
 	w.statusCode = statusCode
 
 	// Capture response headers using the new method
@@ -185,7 +242,7 @@ func (w *ResponseWriterWrapper) WriteHeader(statusCode int) {
 			w.streamDone = doneChan
 
 			// Start async chunk processor
-			go w.processStreamingChunks(doneChan)
+			go processStreamingChunks(streamWriter, w.chunkChannel, doneChan)
 
 			// Write status immediately
 			_ = streamWriter.WriteStatus(statusCode, w.headers)
@@ -246,20 +303,20 @@ func (w *ResponseWriterWrapper) detectStreaming(contentType string) bool {
 }
 
 // processStreamingChunks runs in a separate goroutine to process response chunks from the chunkChannel.
-// It asynchronously writes each chunk to the streaming log writer.
-func (w *ResponseWriterWrapper) processStreamingChunks(done chan struct{}) {
+// Its inputs are fixed at creation so it never reads mutable writer capture state.
+func processStreamingChunks(streamWriter logging.StreamingLogWriter, chunks <-chan []byte, done chan struct{}) {
 	if done == nil {
 		return
 	}
 
 	defer close(done)
 
-	if w.streamWriter == nil || w.chunkChannel == nil {
+	if streamWriter == nil || chunks == nil {
 		return
 	}
 
-	for chunk := range w.chunkChannel {
-		w.streamWriter.WriteChunkAsync(chunk)
+	for chunk := range chunks {
+		streamWriter.WriteChunkAsync(chunk)
 	}
 }
 
@@ -268,6 +325,12 @@ func (w *ResponseWriterWrapper) processStreamingChunks(done chan struct{}) {
 // For non-streaming responses, it logs the complete request and response details,
 // including any API-specific request/response data stored in the Gin context.
 func (w *ResponseWriterWrapper) Finalize(c *gin.Context) error {
+	w.captureMu.Lock()
+	defer w.captureMu.Unlock()
+	if w.loggingSuppressed {
+		w.suppressRequestLoggingLocked(c)
+		return nil
+	}
 	if w.requestInfo != nil && w.requestInfo.deferredBodyCapture != nil {
 		defer w.requestInfo.deferredBodyCapture.Cleanup()
 	}

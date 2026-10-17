@@ -252,7 +252,7 @@ func convertClaudeRequestToOpenAI(modelName string, inputRawJSON []byte, stream 
 						}
 						toolResultContent, toolResultImages := convertClaudeToolResultContent(part.Get("content"))
 						toolResultJSON, _ = sjson.SetBytes(toolResultJSON, "content", toolResultContent)
-						relayedToolImages = append(relayedToolImages, toolResultImages...)
+						relayedToolImages = append(relayedToolImages, claudeToolImageRelay(toolUseID, toolResultImages)...)
 						toolResults = append(toolResults, toolResultJSON)
 					}
 					return true
@@ -621,6 +621,14 @@ func convertClaudeToolResultContent(content gjson.Result) (string, [][]byte) {
 		var parts []string
 		var images [][]byte
 		content.ForEach(func(_, item gjson.Result) bool {
+			if nested, ok := nestedClaudeToolContent(item); ok {
+				text, nestedImages := convertClaudeToolResultContent(nested)
+				if text != toolResultImagePlaceholder {
+					parts = append(parts, text)
+				}
+				images = append(images, nestedImages...)
+				return true
+			}
 			switch {
 			case item.Type == gjson.String:
 				parts = append(parts, item.String())
@@ -651,6 +659,9 @@ func convertClaudeToolResultContent(content gjson.Result) (string, [][]byte) {
 	}
 
 	if content.IsObject() {
+		if nested, ok := nestedClaudeToolContent(content); ok {
+			return convertClaudeToolResultContent(nested)
+		}
 		if content.Get("type").String() == "image" {
 			if contentItem, ok := convertClaudeContentPart(content); ok {
 				return toolResultImagePlaceholder, [][]byte{[]byte(contentItem)}

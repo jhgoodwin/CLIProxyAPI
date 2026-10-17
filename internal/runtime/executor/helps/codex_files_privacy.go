@@ -10,9 +10,15 @@ import (
 const FileProbePrivacyHeader = "X-CPA-Files-Probe"
 
 func FilePrivacyRequest(r *http.Request) bool {
-	return r != nil && (r.URL.Path == "/v1/files" || strings.HasPrefix(r.URL.Path, "/v1/files/") || (r.Method == http.MethodPost && r.URL.Path == "/v1/responses" && r.Header.Get(FileProbePrivacyHeader) == "1"))
+	if r != nil && sharedFilePrivacyContext(r.Context()) {
+		return true
+	}
+	return r != nil && r.URL != nil && (r.URL.Path == "/v1/files" || strings.HasPrefix(r.URL.Path, "/v1/files/") || (r.Method == http.MethodPost && r.URL.Path == "/v1/responses" && r.Header.Get(FileProbePrivacyHeader) == "1"))
 }
 func FilePrivacyContext(ctx context.Context) bool {
+	if sharedFilePrivacyContext(ctx) {
+		return true
+	}
 	if f := FileRequestFromContext(ctx); f != nil && (f.Owner != "" || f.Local) {
 		return true
 	}

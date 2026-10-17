@@ -189,6 +189,10 @@ func (s *Server) UpdateClientsContext(ctx context.Context, cfg *config.Config) b
 	s.oldConfigYaml, _ = yaml.Marshal(cfg)
 
 	s.handlers.UpdateClients(effectiveSDKConfig(cfg))
+	if oldCfg != nil && (oldCfg.Files.StorageDir != cfg.Files.StorageDir || oldCfg.Files.MaxFiles != cfg.Files.MaxFiles || oldCfg.Files.MaxStorageBytes != cfg.Files.MaxStorageBytes || oldCfg.Files.CleanupIntervalSeconds != cfg.Files.CleanupIntervalSeconds || oldCfg.CodexFilesPrototype.MaxFiles != cfg.CodexFilesPrototype.MaxFiles) && s.filesStore != nil {
+		log.Warn("Shared Files storage path, quotas, and cleanup interval changes require a server restart")
+	}
+	s.setupSharedFiles()
 	s.handlers.SetPluginHost(s.pluginHost)
 	if s.pluginHost != nil {
 		s.pluginHost.SetModelExecutor(s.handlers)

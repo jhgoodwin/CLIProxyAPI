@@ -84,6 +84,8 @@ type Auth struct {
 	Quota QuotaState `json:"quota"`
 	// LastError stores the last failure encountered while executing or refreshing.
 	LastError *Error `json:"last_error,omitempty"`
+	// errorDiagnostic keeps private upstream text out of serialized state.
+	errorDiagnostic errorDiagnostic
 	// CreatedAt is the creation timestamp in UTC.
 	CreatedAt time.Time `json:"created_at"`
 	// UpdatedAt is the last modification timestamp in UTC.
@@ -221,6 +223,8 @@ type ModelState struct {
 	NextRetryAfter time.Time `json:"next_retry_after"`
 	// LastError records the latest error observed for this model.
 	LastError *Error `json:"last_error,omitempty"`
+	// errorDiagnostic keeps private upstream text out of serialized state.
+	errorDiagnostic errorDiagnostic
 	// Quota retains quota information if this model hit rate limits.
 	Quota QuotaState `json:"quota"`
 	// UpdatedAt tracks the last update timestamp for this model state.
@@ -451,6 +455,7 @@ func (m *ModelState) Clone() *ModelState {
 			HTTPStatus: m.LastError.HTTPStatus,
 		}
 	}
+	copyState.errorDiagnostic = m.errorDiagnostic.cloneFor(m.LastError, copyState.LastError)
 	return &copyState
 }
 

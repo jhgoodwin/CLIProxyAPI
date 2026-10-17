@@ -58,21 +58,22 @@ func (s *Server) setupRoutes() {
 	claudeCodeHandlers := claude.NewClaudeCodeAPIHandler(s.handlers)
 	openaiResponsesHandlers := openai.NewOpenAIResponsesAPIHandler(s.handlers)
 	s.codexLiveHandler = codexlive.NewHandler(s.handlers.AuthManager, s.cfg)
+	filesHandlers := s.setupSharedFiles()
 
 	// OpenAI compatible API routes
 	v1 := s.engine.Group("/v1")
-	v1.Use(AuthMiddleware(s.accessManager))
+	v1.Use(canonicalAPIAuthMiddleware(s.accessManager))
 	{
 		v1.GET("/models", s.unifiedModelsHandler(openaiHandlers, claudeCodeHandlers))
 		v1.GET("/models/*model", func(c *gin.Context) {
 			c.Set(handlers.ModelDetailIDContextKey, strings.TrimPrefix(c.Param("model"), "/"))
 			s.unifiedModelsHandler(openaiHandlers, claudeCodeHandlers)(c)
 		})
-		v1.POST("/files", openaiResponsesHandlers.FilesUpload)
-		v1.GET("/files", openaiResponsesHandlers.FilesList)
-		v1.GET("/files/:file_id", openaiResponsesHandlers.FilesRetrieve)
-		v1.GET("/files/:file_id/content", openaiResponsesHandlers.FilesContent)
-		v1.DELETE("/files/:file_id", openaiResponsesHandlers.FilesDelete)
+		v1.POST("/files", filesHandlers.Upload)
+		v1.GET("/files", filesHandlers.List)
+		v1.GET("/files/:file_id", filesHandlers.Get)
+		v1.GET("/files/:file_id/content", filesHandlers.Content)
+		v1.DELETE("/files/:file_id", filesHandlers.Delete)
 		v1.POST("/chat/completions", openaiHandlers.ChatCompletions)
 		v1.POST("/completions", openaiHandlers.Completions)
 		v1.POST("/images/generations", openaiHandlers.ImagesGenerations)

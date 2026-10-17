@@ -703,9 +703,9 @@ func authCooldownStateRecord(auth *Auth, now time.Time) (CooldownStateRecord, bo
 		AuthFile:       cooldownAuthFile(auth),
 		Status:         "cooling",
 		NextRetryAfter: auth.NextRetryAfter,
-		Reason:         cooldownReason(auth.StatusMessage, auth.Quota, auth.LastError),
+		Reason:         cooldownReason(auth.StatusMessage, auth.Quota, auth.errorDiagnostic.diagnosticError(auth.LastError)),
 		Quota:          cooldownFieldsOf(auth.Quota),
-		LastError:      cloneError(auth.LastError),
+		LastError:      cloneError(auth.errorDiagnostic.diagnosticError(auth.LastError)),
 		UpdatedAt:      auth.UpdatedAt,
 	}, true
 }
@@ -722,9 +722,9 @@ func modelCooldownStateRecord(auth *Auth, model string, state *ModelState, now t
 		Model:          model,
 		Status:         "cooling",
 		NextRetryAfter: state.NextRetryAfter,
-		Reason:         cooldownReason(state.StatusMessage, state.Quota, state.LastError),
+		Reason:         cooldownReason(state.StatusMessage, state.Quota, state.errorDiagnostic.diagnosticError(state.LastError)),
 		Quota:          cooldownFieldsOf(state.Quota),
-		LastError:      cloneError(state.LastError),
+		LastError:      cloneError(state.errorDiagnostic.diagnosticError(state.LastError)),
 		UpdatedAt:      state.UpdatedAt,
 	}, true
 }
@@ -852,10 +852,12 @@ func (m *Manager) MarkResult(ctx context.Context, result Result) {
 					prevModelRetryAfter := state.NextRetryAfter
 					if result.Error != nil {
 						state.LastError = cloneError(result.Error)
-						state.StatusMessage = result.Error.Message
+						state.errorDiagnostic = result.errorDiagnostic.cloneFor(result.Error, state.LastError)
+						state.StatusMessage = result.diagnosticError().Message
 						if !wasTerminalUnauthorized {
 							auth.LastError = cloneError(result.Error)
-							auth.StatusMessage = result.Error.Message
+							auth.errorDiagnostic = result.errorDiagnostic.cloneFor(result.Error, auth.LastError)
+							auth.StatusMessage = result.diagnosticError().Message
 						}
 					}
 
@@ -1018,6 +1020,12 @@ func (m *Manager) MarkResult(ctx context.Context, result Result) {
 				}
 				if !wasTerminalUnauthorized {
 					applyAuthFailureState(auth, result.Error, result.RetryAfter, now, disableCooling)
+					if result.Error != nil && !shouldSkipCredentialCooldown(result.Error) {
+						auth.errorDiagnostic = result.errorDiagnostic.cloneFor(result.Error, auth.LastError)
+						if auth.StatusMessage == result.Error.Message {
+							auth.StatusMessage = result.diagnosticError().Message
+						}
+					}
 				}
 			}
 		}
@@ -1238,6 +1246,7 @@ func mergeModelState(target, source *ModelState) *ModelState {
 		},
 		UpdatedAt: target.UpdatedAt,
 	}
+	merged.errorDiagnostic = preferred.errorDiagnostic.cloneFor(preferred.LastError, merged.LastError)
 	merged.Quota = mergeQuotaObservation(merged.Quota, fallback.Quota)
 	merged.Quota = mergeQuotaObservation(merged.Quota, preferred.Quota)
 	if source.NextRetryAfter.After(merged.NextRetryAfter) {
@@ -1257,6 +1266,7 @@ func mergeModelState(target, source *ModelState) *ModelState {
 	}
 	if merged.LastError == nil {
 		merged.LastError = cloneError(fallback.LastError)
+		merged.errorDiagnostic = fallback.errorDiagnostic.cloneFor(fallback.LastError, merged.LastError)
 	}
 	if merged.Quota.Reason == "" {
 		merged.Quota.Reason = fallback.Quota.Reason
@@ -1516,10 +1526,7 @@ func cloneError(err *Error) *Error {
 }
 
 func errorString(err error) string {
-	if err == nil {
-		return ""
-	}
-	return err.Error()
+	return safeErrorDiagnosticForLog(err)
 }
 
 func statusCodeFromError(err error) int {

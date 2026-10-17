@@ -27,6 +27,9 @@ func (e *CodexWebsocketsExecutor) ExecuteStream(ctx context.Context, auth *clipr
 		return nil, statusErr{code: http.StatusBadRequest, msg: "streaming not supported for /responses/compact"}
 	}
 
+	if err := rejectCodexWebsocketFiles(ctx, req.Payload); err != nil {
+		return nil, err
+	}
 	baseModel := helps.CodexBaseModel(req.Model)
 
 	reporter := helps.NewExecutorUsageReporter(ctx, e, baseModel, auth)
@@ -750,6 +753,9 @@ type codexWebsocketPrepared struct {
 }
 
 func (e *CodexWebsocketsExecutor) prepareCodexWebsocketStream(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (*codexWebsocketPrepared, error) {
+	if err := rejectCodexWebsocketFiles(ctx, req.Payload); err != nil {
+		return nil, err
+	}
 	baseModel := helps.CodexBaseModel(req.Model)
 	apiKey, baseURL := codexCreds(auth)
 	if baseURL == "" {
@@ -804,6 +810,9 @@ func (e *CodexWebsocketsExecutor) prepareCodexWebsocketStream(ctx context.Contex
 		return nil, errPromptCache
 	}
 	body = finalizePayload(helps.SanitizeCodexInputItemIDs(body))
+	if err := helps.ValidateFilePayload(ctx, body); err != nil {
+		return nil, err
+	}
 	wsHeaders = applyCodexWebsocketHeaders(ctx, wsHeaders, auth, apiKey, e.cfg, preserveNativeOutput, opts.Headers)
 	applyCodexRoutingHint(ctx, wsHeaders, auth, baseModel, body, opts.Headers)
 	applyModelHeaderOverrides(wsHeaders, baseModel)

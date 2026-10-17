@@ -3,12 +3,10 @@ package helps
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"image"
 	"image/jpeg"
 	"image/png"
 	"os"
-	"strings"
 	"testing"
 	"time"
 
@@ -51,10 +49,10 @@ func TestScreenshotStoreOriginalMemoExpiry(t *testing.T) {
 	if FileRequestFromContext(ctx).Owner != "" || !FileRequestFromContext(ctx).Local {
 		t.Fatal("account dependence")
 	}
-	if gjson.GetBytes(resolved, "input.0.content.1.file_id").String() != "external-file" || gjson.GetBytes(resolved, "input.1.output.0.file_id").Exists() {
-		t.Fatal("reference handling")
+	if !bytes.Equal(resolved, body) || gjson.GetBytes(resolved, "input.1.output.0.file_id").String() != again.ID {
+		t.Fatal("local references were expanded before credential selection")
 	}
-	emitted, e := base64.StdEncoding.DecodeString(strings.TrimPrefix(gjson.GetBytes(resolved, "input.1.output.0.image_url").String(), "data:image/png;base64,"))
+	emitted, e := FileRequestFromContext(ctx).Pending[again.ID].Read(ctx)
 	if e != nil || !bytes.Equal(emitted, variant) {
 		t.Fatal("memo output")
 	}

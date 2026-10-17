@@ -25,9 +25,7 @@ func (e *CodexExecutor) UploadVisionPNG(ctx context.Context, a *auth.Auth, name 
 		base = "https://chatgpt.com/backend-api/codex"
 	}
 	base = strings.TrimSuffix(strings.TrimRight(base, "/"), "/codex")
-	client := helps.NewUtlsHTTPClient(ctx, e.cfg, a, 0)
-	// Never follow a redirect with backend credentials or a signed URL.
-	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	client := codexFileNoRedirectClient(helps.NewUtlsHTTPClient(ctx, e.cfg, a, 0))
 	backend := func(path string, payload []byte) ([]byte, error) {
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+path, bytes.NewReader(payload))
 		if err != nil {

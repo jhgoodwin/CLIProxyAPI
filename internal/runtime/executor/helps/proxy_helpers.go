@@ -42,7 +42,7 @@ func NewProxyAwareHTTPClient(ctx context.Context, cfg *config.Config, auth *clip
 		transport := buildProxyTransport(proxyURL)
 		if transport != nil {
 			httpClient.Transport = transport
-			return httpClient
+			return operationHTTPClient(ctx, httpClient)
 		}
 		// If proxy setup failed, log and fall through to context RoundTripper
 		log.Debugf("failed to setup proxy from URL: %s, falling back to context transport", proxyutil.Redact(proxyURL))
@@ -53,7 +53,7 @@ func NewProxyAwareHTTPClient(ctx context.Context, cfg *config.Config, auth *clip
 		httpClient.Transport = rt
 	}
 
-	return httpClient
+	return operationHTTPClient(ctx, httpClient)
 }
 
 var devinTransportCache = NewTransportCache[string](DefaultTransportCacheCapacity)

@@ -368,7 +368,8 @@ func setGenerateMetadata(meta map[string]any, rawJSON []byte) {
 // It holds a pool of clients to interact with the backend service and manages
 // load balancing, client selection, and configuration.
 type BaseAPIHandler struct {
-	Files *helps.CodexFileRegistry
+	Files       *helps.CodexFileRegistry
+	SharedFiles SharedFileStore
 	// AuthManager manages auth lifecycle and execution in the new architecture.
 	AuthManager *coreauth.Manager
 
@@ -653,7 +654,7 @@ func (h *BaseAPIHandler) StartNonStreamingKeepAlive(c *gin.Context, ctx context.
 
 // appendAPIResponse preserves any previously captured API response and appends new data.
 func appendAPIResponse(c *gin.Context, data []byte) {
-	if c == nil || len(data) == 0 {
+	if c == nil || len(data) == 0 || helps.FilePrivacyRequest(c.Request) {
 		return
 	}
 

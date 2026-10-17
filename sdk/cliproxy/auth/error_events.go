@@ -70,7 +70,7 @@ func buildErrorEventPayload(result Result, authSnapshot *Auth) ([]byte, bool) {
 		AuthID:     strings.TrimSpace(result.AuthID),
 		AuthIndex:  strings.TrimSpace(authSnapshot.Index),
 		StatusCode: errorEventStatusCode(result.Error),
-		Body:       errorEventBody(result.Error),
+		Body:       errorEventBody(result.diagnosticError()),
 		AuthStatus: buildErrorEventAuthStatus(result.Model, authSnapshot),
 	}
 	if result.Error != nil {

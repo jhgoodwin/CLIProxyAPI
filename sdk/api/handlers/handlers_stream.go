@@ -196,7 +196,7 @@ func (h *BaseAPIHandler) streamWithPluginExecutor(ctx context.Context, entryProt
 				errMsg := executionErrorMessage(chunk.Err)
 				completionOutcome = pluginapi.RequestCompletionFailed
 				completionStatus = errMsg.StatusCode
-				completionErr = chunk.Err
+				completionErr = errMsg.Error
 				select {
 				case errChan <- errMsg:
 				case <-done:
@@ -387,7 +387,7 @@ func (h *BaseAPIHandler) executeStreamWithAuthManagerFormats(ctx context.Context
 	streamResult, err := h.AuthManager.ExecuteStream(ctx, providers, req, opts)
 	if err != nil {
 		err = enrichAuthSelectionError(err, providers, normalizedModel)
-		errMsg := privateFileExecutionError(ctx, executionErrorMessage(err))
+		errMsg := executionErrorMessage(err)
 		lifecycle.completeError(ctx, errMsg)
 		errChan := make(chan *interfaces.ErrorMessage, 1)
 		errChan <- errMsg
@@ -652,7 +652,6 @@ func (h *BaseAPIHandler) executeStreamWithAuthManagerFormats(ctx context.Context
 		}
 
 		sendErr := func(msg *interfaces.ErrorMessage) bool {
-			msg = privateFileExecutionError(ctx, msg)
 			if ctx == nil {
 				errChan <- msg
 				return true
@@ -730,7 +729,7 @@ func (h *BaseAPIHandler) executeStreamWithAuthManagerFormats(ctx context.Context
 				errMsg := executionErrorMessage(chunk.Err)
 				completionOutcome = pluginapi.RequestCompletionFailed
 				completionStatus = errMsg.StatusCode
-				completionErr = chunk.Err
+				completionErr = errMsg.Error
 				_ = sendErr(errMsg)
 				return
 			}

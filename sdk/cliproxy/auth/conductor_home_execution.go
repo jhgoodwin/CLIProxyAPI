@@ -159,7 +159,7 @@ func (m *Manager) executeHomeOnce(ctx context.Context, providers []string, req c
 			if stateModel == "" {
 				stateModel = canonicalModelKey(routeModel)
 			}
-			m.reportHomeResult(execCtx, Result{AuthID: auth.ID, Provider: selection.Provider, Model: stateModel, RouteModel: routeModel, Success: false, Error: resultErrorFromError(errPrepare), Options: opts}, auth)
+			m.reportHomeResult(execCtx, Result{AuthID: auth.ID, Provider: selection.Provider, Model: stateModel, RouteModel: routeModel, Success: false, Options: opts}.withError(errPrepare), auth)
 			releaseAttempt()
 			if errEnd := m.endHomeSelectionBeforeRedispatch(ctx, selection, "prepare_failed"); errEnd != nil {
 				return cliproxyexecutor.Response{}, errEnd
@@ -266,7 +266,7 @@ func (m *Manager) executeHomeOnce(ctx context.Context, providers []string, req c
 				}
 				return response, nil
 			}
-			result.Error = resultErrorFromError(errExecute)
+			result = result.withError(errExecute)
 			result.RetryAfter = retryAfterFromError(errExecute)
 			if isCredentialScopedError(errExecute) {
 				result.CredentialScope = true

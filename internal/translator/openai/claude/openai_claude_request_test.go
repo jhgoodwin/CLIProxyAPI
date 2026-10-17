@@ -763,10 +763,10 @@ func TestConvertClaudeRequestToOpenAI_ToolResultTextAndImageContent(t *testing.T
 	if got := relayContent.Get("0.text").String(); got != toolResultImageRelayNotice {
 		t.Fatalf("Expected relay notice %q, got %q", toolResultImageRelayNotice, got)
 	}
-	if got := relayContent.Get("1.type").String(); got != "image_url" {
+	if got := relayContent.Get("2.type").String(); got != "image_url" {
 		t.Fatalf("Expected relay content type %q, got %q", "image_url", got)
 	}
-	if got := relayContent.Get("1.image_url.url").String(); got != "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==" {
+	if got := relayContent.Get("2.image_url.url").String(); got != "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==" {
 		t.Fatalf("Unexpected image_url: %q", got)
 	}
 }
@@ -817,10 +817,10 @@ func TestConvertClaudeRequestToOpenAI_ToolResultURLImageOnly(t *testing.T) {
 	if got := messages[2].Get("role").String(); got != "user" {
 		t.Fatalf("Expected relay message role %q, got %q", "user", got)
 	}
-	if got := relayContent.Get("1.type").String(); got != "image_url" {
+	if got := relayContent.Get("2.type").String(); got != "image_url" {
 		t.Fatalf("Expected relay content type %q, got %q", "image_url", got)
 	}
-	if got := relayContent.Get("1.image_url.url").String(); got != "https://example.com/tool.png" {
+	if got := relayContent.Get("2.image_url.url").String(); got != "https://example.com/tool.png" {
 		t.Fatalf("Unexpected image_url: %q", got)
 	}
 }
@@ -871,16 +871,16 @@ func TestConvertClaudeRequestToOpenAI_ToolResultImageMergesIntoUserText(t *testi
 	}
 
 	content := messages[2].Get("content")
-	if got := len(content.Array()); got != 3 {
-		t.Fatalf("Expected 3 user content parts, got %d: %s", got, content.Raw)
+	if got := len(content.Array()); got != 4 {
+		t.Fatalf("Expected 4 user content parts, got %d: %s", got, content.Raw)
 	}
 	if got := content.Get("0.text").String(); got != toolResultImageRelayNotice {
 		t.Fatalf("Expected relay notice %q, got %q", toolResultImageRelayNotice, got)
 	}
-	if got := content.Get("1.type").String(); got != "image_url" {
+	if got := content.Get("2.type").String(); got != "image_url" {
 		t.Fatalf("Expected second part type %q, got %q", "image_url", got)
 	}
-	if got := content.Get("2.text").String(); got != "What color?" {
+	if got := content.Get("3.text").String(); got != "What color?" {
 		t.Fatalf("Expected trailing user text %q, got %q", "What color?", got)
 	}
 }
@@ -954,16 +954,16 @@ func TestConvertClaudeRequestToOpenAI_MultipleToolResultsWithImages(t *testing.T
 		t.Fatalf("Expected user relay message, got: %s", messages[3].Raw)
 	}
 	relayContent := messages[3].Get("content").Array()
-	if len(relayContent) != 3 {
-		t.Fatalf("Expected 3 parts in relay (notice + 2 images), got %d: %s", len(relayContent), messages[3].Get("content").Raw)
+	if len(relayContent) != 5 {
+		t.Fatalf("Expected 5 parts in relay (notice + labels + 2 images), got %d: %s", len(relayContent), messages[3].Get("content").Raw)
 	}
 	if got := relayContent[0].Get("text").String(); got != toolResultImageRelayNotice {
 		t.Fatalf("Expected notice %q, got %q", toolResultImageRelayNotice, got)
 	}
-	if got := relayContent[1].Get("image_url.url").String(); got != "data:image/png;base64,img1" {
+	if got := relayContent[2].Get("image_url.url").String(); got != "data:image/png;base64,img1" {
 		t.Fatalf("Expected image 1 url, got %q", got)
 	}
-	if got := relayContent[2].Get("image_url.url").String(); got != "https://example.com/2.png" {
+	if got := relayContent[4].Get("image_url.url").String(); got != "https://example.com/2.png" {
 		t.Fatalf("Expected image 2 url, got %q", got)
 	}
 }

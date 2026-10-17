@@ -70,6 +70,7 @@ func RequestLoggingMiddleware(logger logging.RequestLogger) gin.HandlerFunc {
 			wrapper.logOnErrorOnly = true
 		}
 		c.Writer = wrapper
+		c.Set(helps.FilePrivacyLogSuppressorKey, wrapper)
 		attachRequestLogSources(c, logger, loggerEnabled)
 		attachDeferredRequestBodyCapture(c.Request, logger, requestInfo, loggerEnabled, captureBody)
 

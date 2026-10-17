@@ -133,11 +133,9 @@ func (e *CodexExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Au
 			return nil, readErr
 		}
 		if helps.FilePrivacyContext(ctx) {
-			message := helps.SafeFileRejection(data)
-			if message == "" {
-				message = "Codex upstream rejected request"
-			}
-			return nil, statusErr{code: httpResp.StatusCode, msg: message}
+			err := newCodexStatusErrWithCooling(httpResp.StatusCode, data, e.modelLevelCooling())
+			err.privateLog = true
+			return nil, err
 		}
 		if errClearReplay := clearCodexReasoningReplayOnInvalidSignature(ctx, replayScope, httpResp.StatusCode, data); errClearReplay != nil {
 			return nil, errClearReplay
@@ -212,7 +210,8 @@ func (e *CodexExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Au
 				if streamErr, terminalBody, ok := codexTerminalFailureErrWithCooling(data, e.modelLevelCooling()); ok {
 					closeBootstrapBody()
 					if helps.FilePrivacyContext(ctx) {
-						return nil, safeCodexFileStatus(streamErr.StatusCode(), terminalBody)
+						streamErr.privateLog = true
+						return nil, streamErr
 					}
 					if errClearReplay := clearCodexReasoningReplayOnInvalidSignature(ctx, replayScope, streamErr.StatusCode(), terminalBody); errClearReplay != nil {
 						helps.RecordAPIResponseError(ctx, e.cfg, errClearReplay)
@@ -404,9 +403,9 @@ func (e *CodexExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Au
 				eventType := gjson.GetBytes(data, "type").String()
 				if streamErr, terminalBody, ok := codexTerminalFailureErrWithCooling(data, e.modelLevelCooling()); ok {
 					if helps.FilePrivacyContext(ctx) {
-						safeErr := safeCodexFileStatus(streamErr.StatusCode(), terminalBody)
+						streamErr.privateLog = true
 						select {
-						case out <- cliproxyexecutor.StreamChunk{Err: safeErr}:
+						case out <- cliproxyexecutor.StreamChunk{Err: streamErr}:
 						case <-ctx.Done():
 						}
 						return

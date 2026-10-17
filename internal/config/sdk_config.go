@@ -6,7 +6,10 @@ package config
 
 // SDKConfig represents the application's configuration, loaded from a YAML file.
 type SDKConfig struct {
-	// CodexFilesPrototype enables HTTP-only, in-memory PNG references. Disabled by default.
+	// Files configures the shared OpenAI/Anthropic durable image store.
+	Files FilesConfig `yaml:"files" json:"files"`
+
+	// CodexFilesPrototype retains legacy upload limits for the shared Files store. Disabled by default.
 	CodexFilesPrototype CodexFilesPrototypeConfig `yaml:"codex-files-prototype" json:"codex-files-prototype"`
 
 	// Client configures client-facing compatibility behavior.

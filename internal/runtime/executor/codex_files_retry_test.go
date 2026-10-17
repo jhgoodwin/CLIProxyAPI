@@ -24,6 +24,11 @@ type fileRetryExecutor struct {
 	t                *testing.T
 }
 
+// DecorateForAuth preserves this fixture's synthetic execution and refresh methods.
+func (e *fileRetryExecutor) DecorateForAuth(_ *auth.Auth) auth.ProviderExecutor {
+	return e
+}
+
 func (e *fileRetryExecutor) Execute(ctx context.Context, a *auth.Auth, r exec.Request, o exec.Options) (exec.Response, error) {
 	e.calls++
 	if a.ID != "file-retry-owner" || o.Metadata[exec.PinnedAuthMetadataKey] != a.ID {

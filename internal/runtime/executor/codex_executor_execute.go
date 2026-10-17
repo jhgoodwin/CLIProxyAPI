@@ -122,11 +122,9 @@ func (e *CodexExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, re
 	if httpResp.StatusCode < 200 || httpResp.StatusCode >= 300 {
 		b, _ := io.ReadAll(httpResp.Body)
 		if helps.FilePrivacyContext(ctx) {
-			message := helps.SafeFileRejection(b)
-			if message == "" {
-				message = "Codex upstream rejected request"
-			}
-			return resp, statusErr{code: httpResp.StatusCode, msg: message}
+			err := newCodexStatusErrWithCooling(httpResp.StatusCode, b, e.modelLevelCooling())
+			err.privateLog = true
+			return resp, err
 		}
 		if errClearReplay := clearCodexReasoningReplayOnInvalidSignature(ctx, replayScope, httpResp.StatusCode, b); errClearReplay != nil {
 			return resp, errClearReplay
@@ -159,7 +157,8 @@ func (e *CodexExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, re
 
 		if streamErr, terminalBody, ok := codexTerminalFailureErrWithCooling(eventData, e.modelLevelCooling()); ok {
 			if helps.FilePrivacyContext(ctx) {
-				return resp, safeCodexFileStatus(streamErr.StatusCode(), terminalBody)
+				streamErr.privateLog = true
+				return resp, streamErr
 			}
 			if errClearReplay := clearCodexReasoningReplayOnInvalidSignature(ctx, replayScope, streamErr.StatusCode(), terminalBody); errClearReplay != nil {
 				return resp, errClearReplay
@@ -309,11 +308,9 @@ func (e *CodexExecutor) executeCompact(ctx context.Context, auth *cliproxyauth.A
 	if httpResp.StatusCode < 200 || httpResp.StatusCode >= 300 {
 		b, _ := io.ReadAll(httpResp.Body)
 		if helps.FilePrivacyContext(ctx) {
-			message := helps.SafeFileRejection(b)
-			if message == "" {
-				message = "Codex upstream rejected request"
-			}
-			return resp, statusErr{code: httpResp.StatusCode, msg: message}
+			err := newCodexStatusErrWithCooling(httpResp.StatusCode, b, e.modelLevelCooling())
+			err.privateLog = true
+			return resp, err
 		}
 		helps.AppendAPIResponseChunk(ctx, e.cfg, b)
 		helps.LogWithRequestID(ctx).Debugf("request error, error status: %d, error message: %s", httpResp.StatusCode, helps.SummarizeErrorBody(httpResp.Header.Get("Content-Type"), b))

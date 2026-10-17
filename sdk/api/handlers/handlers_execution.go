@@ -126,7 +126,7 @@ func (h *BaseAPIHandler) executeWithAuthManagerFormats(ctx context.Context, entr
 	resp, err := h.AuthManager.Execute(ctx, providers, req, opts)
 	if err != nil {
 		err = enrichAuthSelectionError(err, providers, normalizedModel)
-		errMsg := privateFileExecutionError(ctx, executionErrorMessage(err))
+		errMsg := executionErrorMessage(err)
 		lifecycle.completeError(ctx, errMsg)
 		return nil, nil, errMsg
 	}
@@ -147,6 +147,15 @@ func (h *BaseAPIHandler) ExecuteCountWithAuthManager(ctx context.Context, handle
 }
 
 func (h *BaseAPIHandler) executeCountWithAuthManager(ctx context.Context, handlerType, modelName string, rawJSON []byte, alt string, execOptions modelExecutionOptions) ([]byte, http.Header, *interfaces.ErrorMessage) {
+	if next, data, err, handled := h.prepareSharedFileReferences(ctx, handlerType, rawJSON); handled {
+		if err != nil {
+			return nil, nil, err
+		}
+		ctx, rawJSON = next, data
+	}
+	if helps.FileRequestFromContext(ctx) != nil || helps.ContainsLocalFileID(rawJSON) {
+		return nil, nil, &interfaces.ErrorMessage{StatusCode: http.StatusNotImplemented, Error: fmt.Errorf("hosted screenshot token counting is not implemented")}
+	}
 	originalRequestedModel := modelName
 	routeDecision := h.applyModelRouter(ctx, handlerType, modelName, rawJSON, false, execOptions)
 	if routeDecision.ExecutorPluginID != "" {
@@ -197,7 +206,7 @@ func (h *BaseAPIHandler) executeCountWithAuthManager(ctx context.Context, handle
 	resp, err := h.AuthManager.ExecuteCount(ctx, providers, req, opts)
 	if err != nil {
 		err = enrichAuthSelectionError(err, providers, normalizedModel)
-		errMsg := privateFileExecutionError(ctx, executionErrorMessage(err))
+		errMsg := executionErrorMessage(err)
 		lifecycle.completeError(ctx, errMsg)
 		return nil, nil, errMsg
 	}

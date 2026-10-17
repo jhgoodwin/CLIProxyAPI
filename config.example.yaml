@@ -1070,6 +1070,15 @@ oauth:
 
 # Image and video behavior.
 multimedia:
+  # Shared OpenAI/Anthropic image Files store; see docs/files.md.
+  # Files are durable and caller-scoped, independent of upstream credentials.
+  # files:
+  #   enabled: true
+  #   storage-dir: /var/lib/cli-proxy-api/files
+  #   max-files: 1000
+  #   max-storage-bytes: 10737418240
+  #   cleanup-interval-seconds: 300
+
   # disable-image-generation supports: false (default), true, "chat", or "passthrough".
   # - true: disable image_generation everywhere (also returns 404 for /v1/images/generations and /v1/images/edits).
   # - "chat": disable image_generation injection on non-images endpoints, but keep /v1/images/generations and /v1/images/edits enabled.
