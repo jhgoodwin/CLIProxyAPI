@@ -44,6 +44,17 @@ func (h *Host) HasNativeRoute(path string) bool {
 	return false
 }
 
+// hasNativeRouteMethod reports whether a live plugin owns the exact method and native path.
+func (h *Host) hasNativeRouteMethod(method, path string) bool {
+	if h == nil {
+		return false
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	record, ok := h.nativeRoutes[managementRouteKey(strings.ToUpper(method), path)]
+	return ok && h.fused[record.pluginID] == "" && h.activePluginPaths[record.pluginID] == cleanPluginPath(record.path) && h.activePluginVersions[record.pluginID] == record.version
+}
+
 func (h *Host) RegisterNativeRoutes(ctx context.Context, reserved map[string]struct{}) {
 	if h == nil {
 		return

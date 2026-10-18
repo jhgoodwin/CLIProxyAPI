@@ -69,7 +69,8 @@ func (a *requiredPolicyAccess) Authenticate(ctx context.Context, req *http.Reque
 	identity := a.host.identityOnlyPolicy()
 	supported := req.Method == http.MethodPost && (path == "/v1/chat/completions" || path == "/v1/completions" || path == "/v1/messages" || path == "/v1/responses" || path == "/chat/completions" || path == "/completions" || path == "/messages" || path == "/responses")
 	if identity {
-		supported = identityAPIPath(req.Method, path)
+		// Identity mode authenticates tenants without billing hooks, so registered native plugin routes qualify too.
+		supported = identityAPIPath(req.Method, path) || a.host.hasNativeRouteMethod(req.Method, path)
 	}
 	if homeEnabled || !supported || (!identity && req.Header.Get("Upgrade") != "") {
 		return nil, sdkaccess.NewInternalAuthError("endpoint unavailable with required request policy", nil)
