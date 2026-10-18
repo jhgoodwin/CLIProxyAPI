@@ -47,23 +47,30 @@ func Install() {
 		pairs := []struct {
 			from, to string
 			fn       converter
+			// ctxFn, when set, replaces fn so request-scoped state (e.g. the
+			// pinned upstream.claude.tool-search value) reaches the converter.
+			ctxFn func(context.Context, string, []byte, bool) ([]byte, error)
 		}{
-			{"openai-response", "openai-response", claudeIdentity},
-			{"claude", "claude", claudeIdentity},
-			{"gemini", "gemini", gemininative.ConvertGeminiRequestToGemini},
-			{"openai", "openai", openainative.ConvertOpenAIRequestToOpenAI},
-			{"openai", "claude", claudechat.ConvertOpenAIRequestToClaude},
-			{"openai-response", "claude", clauderesp.ConvertOpenAIResponsesRequestToClaude},
-			{"openai", "gemini", geminichat.ConvertOpenAIRequestToGemini},
-			{"openai-response", "gemini", geminiresp.ConvertOpenAIResponsesRequestToGemini},
-			{"claude", "gemini", geminiclaude.ConvertClaudeRequestToGemini},
-			{"claude", "openai", openaiclaude.ConvertClaudeRequestToOpenAI},
-			{"openai-response", "openai", openairesp.ConvertOpenAIResponsesRequestToOpenAIChatCompletions},
+			{from: "openai-response", to: "openai-response", fn: claudeIdentity},
+			{from: "claude", to: "claude", fn: claudeIdentity},
+			{from: "gemini", to: "gemini", fn: gemininative.ConvertGeminiRequestToGemini},
+			{from: "openai", to: "openai", fn: openainative.ConvertOpenAIRequestToOpenAI},
+			{from: "openai", to: "claude", fn: claudechat.ConvertOpenAIRequestToClaude},
+			{from: "openai-response", to: "claude", ctxFn: convertResponsesToClaudeContext},
+			{from: "openai", to: "gemini", fn: geminichat.ConvertOpenAIRequestToGemini},
+			{from: "openai-response", to: "gemini", fn: geminiresp.ConvertOpenAIResponsesRequestToGemini},
+			{from: "claude", to: "gemini", fn: geminiclaude.ConvertClaudeRequestToGemini},
+			{from: "claude", to: "openai", fn: openaiclaude.ConvertClaudeRequestToOpenAI},
+			{from: "openai-response", to: "openai", fn: openairesp.ConvertOpenAIResponsesRequestToOpenAIChatCompletions},
 		}
 		for _, pair := range pairs {
 			p := pair
-			sdk.RegisterRequestEnvelope(sdk.FromString(p.from), sdk.FromString(p.to), func(_ context.Context, r sdk.RequestEnvelope) sdk.RequestEnvelope {
-				r.Body, r.Err = ConvertWithCompat(p.from, p.to, r.Model, r.Body, r.Stream, p.fn)
+			sdk.RegisterRequestEnvelope(sdk.FromString(p.from), sdk.FromString(p.to), func(ctx context.Context, r sdk.RequestEnvelope) sdk.RequestEnvelope {
+				fn := p.fn
+				if p.ctxFn != nil {
+					fn = func(model string, body []byte, stream bool) ([]byte, error) { return p.ctxFn(ctx, model, body, stream) }
+				}
+				r.Body, r.Err = ConvertWithCompat(p.from, p.to, r.Model, r.Body, r.Stream, fn)
 				return r
 			})
 		}
@@ -71,6 +78,13 @@ func Install() {
 }
 
 func identity(_ string, body []byte, _ bool) ([]byte, error) { return body, nil }
+
+// convertResponsesToClaudeContext matches the builtin envelope converter, which
+// reads the request-pinned tool-search value from ctx.
+func convertResponsesToClaudeContext(ctx context.Context, model string, body []byte, stream bool) ([]byte, error) {
+	r := clauderesp.ConvertOpenAIResponsesRequestEnvelopeToClaude(ctx, sdk.RequestEnvelope{Model: model, Body: body, Stream: stream})
+	return r.Body, r.Err
+}
 
 // claudeIdentity retains the registry's original missing-route model normalization.
 func claudeIdentity(model string, body []byte, _ bool) ([]byte, error) {

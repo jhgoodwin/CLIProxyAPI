@@ -12,6 +12,7 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/executor/helps"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/thinking"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
 	log "github.com/sirupsen/logrus"
@@ -280,6 +281,9 @@ func (e *CodexWebsocketsExecutor) streamCodexDuplex(
 					// Steering carries business input but must not inherit response.create defaults.
 					steerReq := req
 					steerReq.Payload = payload
+					if codexUseSIWC(auth) {
+						payload = thinking.StripConfigurationUpdates(payload)
+					}
 					payload = helps.NewPayloadFinalizer(e.cfg, "codex-websockets", helps.CodexBaseModel(req.Model), "codex", "", payload, steerReq, opts)(payload)
 					payload, _ = sjson.SetBytes(payload, "type", "response.steer")
 					parent := gjson.GetBytes(payload, "previous_response_id").String()
@@ -301,7 +305,8 @@ func (e *CodexWebsocketsExecutor) streamCodexDuplex(
 					}
 					metadataMu.Unlock()
 					// Control frames bypass response.create translations and built-in defaults.
-					// Unknown fields and unsupported input are left to upstream validation.
+					// Except for SIWC configuration_update stripping, unknown fields and unsupported
+					// input are left to upstream validation.
 					if !cliproxyexecutor.WebsocketAuthEnabled(streamCtx, auth.ID) {
 						fail(fmt.Errorf("websocket credential is no longer enabled"))
 						return

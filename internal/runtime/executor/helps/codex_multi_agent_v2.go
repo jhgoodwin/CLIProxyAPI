@@ -204,7 +204,10 @@ func translateRequestWithAPIKeyModelCompatibilityForExecutor(ctx context.Context
 	case from == sdktranslator.FormatOpenAI && to == sdktranslator.FormatClaude:
 		convert = openaichatclaude.ConvertOpenAIRequestToClaudeWithCompat
 	case from == sdktranslator.FormatOpenAIResponse && to == sdktranslator.FormatClaude:
-		convert = responsesclaude.ConvertOpenAIResponsesRequestToClaudeWithCompat
+		// Keep the request context so tool-search pinning survives the Files wrapper.
+		convert = func(model string, payload []byte, stream bool) ([]byte, error) {
+			return responsesclaude.ConvertOpenAIResponsesRequestToClaudeWithCompatContext(ctx, model, payload, stream)
+		}
 	default:
 		return translateRequestWithCodexMultiAgentV2Checked(ctx, headers, cfg, from, to, model, payload, stream)
 	}

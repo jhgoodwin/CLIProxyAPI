@@ -9,6 +9,7 @@ import (
 
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/executor/helps"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/thinking"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
 	sdktranslator "github.com/router-for-me/CLIProxyAPI/v8/sdk/translator"
@@ -31,6 +32,9 @@ func (e *CodexExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, re
 	baseModel := helps.CodexBaseModel(req.Model)
 
 	apiKey, baseURL := codexCreds(auth)
+	if errSIWC := ensureCodexSIWCCredentials(auth, apiKey); errSIWC != nil {
+		return resp, errSIWC
+	}
 	if baseURL == "" {
 		baseURL = "https://chatgpt.com/backend-api/codex"
 	}
@@ -66,9 +70,15 @@ func (e *CodexExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, re
 	body, _ = sjson.DeleteBytes(body, "prompt_cache_retention")
 	body, _ = sjson.DeleteBytes(body, "safety_identifier")
 	body, _ = sjson.DeleteBytes(body, "stream_options")
-	body = normalizeCodexInstructions(body, helps.IsNativeCodexRequest(req.Payload, opts))
-	if e.cfg == nil || e.cfg.DisableImageGeneration == config.DisableImageGenerationOff {
-		body = ensureImageGenerationTool(body, baseModel, auth, opts.Headers)
+	useSIWC := codexUseSIWC(auth)
+	hasExplicitInstructions := gjson.GetBytes(req.Payload, "instructions").Exists() && strings.TrimSpace(gjson.GetBytes(req.Payload, "instructions").String()) != ""
+	if !useSIWC {
+		body = normalizeCodexInstructions(body, helps.IsNativeCodexRequest(req.Payload, opts))
+		if e.cfg == nil || e.cfg.DisableImageGeneration == config.DisableImageGenerationOff {
+			body = ensureImageGenerationTool(body, baseModel, auth, opts.Headers)
+		}
+	} else {
+		body = applyCodexSIWCRequestBodyRules(body, hasExplicitInstructions, cliproxyexecutor.Options{KeepTopLevelEffort: thinking.HasThinkingSuffix(req.Model)})
 	}
 	body = sanitizeOpenAIResponsesReasoningEncryptedContentWithCompat(ctx, "codex executor", body, isCompat)
 	body = normalizeCodexParallelToolCalls(body, opts.Headers)
@@ -137,11 +147,12 @@ func (e *CodexExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, re
 	data, errRead := io.ReadAll(httpResp.Body)
 	helps.AppendAPIResponseChunk(ctx, e.cfg, data)
 
-	lines := bytes.Split(data, []byte("\n"))
+	events := helps.NewCodexSSEScanner(ctx, bytes.NewReader(data), len(data)+1)
 	outputItemsByIndex := make(map[int64][]byte)
 	var outputItemsFallback [][]byte
 	sawOutputDelta := false
-	for _, line := range lines {
+	for events.Scan() {
+		line := events.Bytes()
 		if !bytes.HasPrefix(line, dataTag) {
 			continue
 		}
@@ -229,6 +240,9 @@ func (e *CodexExecutor) executeCompact(ctx context.Context, auth *cliproxyauth.A
 	baseModel := helps.CodexBaseModel(req.Model)
 
 	apiKey, baseURL := codexCreds(auth)
+	if errSIWC := ensureCodexSIWCCredentials(auth, apiKey); errSIWC != nil {
+		return resp, errSIWC
+	}
 	if baseURL == "" {
 		baseURL = "https://chatgpt.com/backend-api/codex"
 	}
@@ -259,7 +273,12 @@ func (e *CodexExecutor) executeCompact(ctx context.Context, auth *cliproxyauth.A
 	body = helps.SetStringIfDifferent(body, "model", baseModel)
 	body = helps.ApplyCodexFastModelTier(body, req.Model)
 	body, _ = sjson.DeleteBytes(body, "stream")
-	body = normalizeCodexInstructions(body, helps.IsNativeCodexRequest(req.Payload, opts))
+	if !codexUseSIWC(auth) {
+		body = normalizeCodexInstructions(body, helps.IsNativeCodexRequest(req.Payload, opts))
+	} else {
+		hasExplicitInstructions := gjson.GetBytes(req.Payload, "instructions").Exists() && strings.TrimSpace(gjson.GetBytes(req.Payload, "instructions").String()) != ""
+		body = applyCodexSIWCCompactBodyRules(body, hasExplicitInstructions, cliproxyexecutor.Options{KeepTopLevelEffort: thinking.HasThinkingSuffix(req.Model)})
+	}
 	body = sanitizeOpenAIResponsesReasoningEncryptedContentWithCompat(ctx, "codex executor", body, isCompat)
 	body = normalizeCodexParallelToolCalls(body, opts.Headers)
 	body = helps.NormalizeCodexToolSchemas(body)

@@ -12,6 +12,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/safemode"
 	sdkaccess "github.com/router-for-me/CLIProxyAPI/v8/sdk/access"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/api/handlers"
+	coreusage "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/usage"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -27,6 +28,9 @@ var corsExposedResponseHeaders = []string{
 	"X-SERVER-BUILD-DATE",
 	"Location",
 	"Retry-After",
+	// Cross-origin management clients must read the config version token to
+	// send it back as If-Match on writes.
+	"ETag",
 	"X-Request-Id",
 	"OpenAI-Request-Id",
 }
@@ -133,7 +137,7 @@ func (s *Server) exampleAPIKeySafeModeMiddleware() gin.HandlerFunc {
 }
 
 func (s *Server) serveExampleAPIKeyWarningPage(c *gin.Context) {
-	cfg := s.cfg
+	cfg := s.getConfig()
 	var keys []string
 	if cfg != nil {
 		keys = safemode.ExampleAPIKeys(cfg.APIKeys)
@@ -214,6 +218,10 @@ func accessAuthMiddleware(manager *sdkaccess.Manager, realtimeError bool) gin.Ha
 				if len(result.Metadata) > 0 {
 					c.Set("accessMetadata", result.Metadata)
 				}
+				reqCtx := coreusage.WithAPIKey(c.Request.Context(), result.Principal)
+				reqCtx = coreusage.WithAccessProvider(reqCtx, result.Provider)
+				reqCtx = coreusage.WithIsNativeKey(reqCtx, coreusage.IsNativeAccessProvider(result.Provider))
+				c.Request = c.Request.WithContext(reqCtx)
 			}
 			c.Next()
 			return
@@ -283,6 +291,10 @@ func realtimeAuthMiddleware(manager *sdkaccess.Manager, handler *codexlive.Handl
 		c.Set("userApiKey", principal)
 		c.Request = c.Request.WithContext(sdkaccess.WithAuthenticatedPrincipal(c.Request.Context(), principal))
 		c.Set("accessProvider", provider)
+		reqCtx := coreusage.WithAPIKey(c.Request.Context(), principal)
+		reqCtx = coreusage.WithAccessProvider(reqCtx, provider)
+		reqCtx = coreusage.WithIsNativeKey(reqCtx, coreusage.IsNativeAccessProvider(provider))
+		c.Request = c.Request.WithContext(reqCtx)
 		c.Set(codexlive.ClientSecretSessionContextKey, authorization.Session)
 		c.Set(codexlive.ClientSecretPrincipalContextKey, authorization.Principal)
 		c.Next()

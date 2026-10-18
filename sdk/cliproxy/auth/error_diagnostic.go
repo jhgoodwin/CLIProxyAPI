@@ -87,6 +87,7 @@ type resultOptionsJSON struct {
 	ProviderPoolQuota                   []pluginapi.ProviderQuotaObservation
 	ProviderPoolAuthIDs                 []string
 	ProxyURL                            string
+	KeepTopLevelEffort                  bool
 }
 
 // MarshalJSON excludes private upstream text and runtime-only execution resources.
@@ -112,6 +113,7 @@ func (r Result) MarshalJSON() ([]byte, error) {
 			ProviderPoolQuota:                   r.Options.ProviderPoolQuota,
 			ProviderPoolAuthIDs:                 r.Options.ProviderPoolAuthIDs,
 			ProxyURL:                            r.Options.ProxyURL,
+			KeepTopLevelEffort:                  r.Options.KeepTopLevelEffort,
 		},
 	})
 }
